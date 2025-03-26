@@ -479,7 +479,7 @@ class FranceCropsDataset(Dataset):
 
         def generate_samples():
             for sample in hf_dataset:
-                x = sample["x"].numpy()  # (100, 60, 12)
+                x = np.array(sample["x"], dtype=np.float32)  # (100, 60, 12)
                 y = sample["y"]
                 for instance in x:
                     yield {
