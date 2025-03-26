@@ -488,11 +488,16 @@ class FranceCropsDataset(Dataset):
                     }
 
         pipeline_steps = [
-            wds.EnumerableDataset(generate_samples),
-            wds.shuffle(1000) if shuffle else lambda x: x,
-            wds.map(self._process_samples),
+            wds.DataPipeline(
+                lambda: generate_samples(),
+                wds.shuffle(1000) if shuffle else lambda x: x,
+                wds.map(self._process_samples),
+                wds.to_tuple("mask_eo", "mask_dw", "x_eo", "y_eo", 
+                           "x_dw", "y_dw", "start_month", "latlons",
+                           "strat", "label")
+            )
         ]
-        return wds.DataPipeline(*pipeline_steps)
+        return pipeline_steps[0]
 
     def _process_samples(self, iter: Iterable[Dict[str, Any]]):
         for sample in iter:
