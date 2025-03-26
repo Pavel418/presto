@@ -488,11 +488,9 @@ class FranceCropsDataset(Dataset):
                     }
 
         pipeline_steps = [
-            wds.SimpleShardList([""]),
-            wds.split_by_worker,
-            wds.Processor(generate_samples),
+            wds.EnumerableDataset(generate_samples),
             wds.shuffle(1000) if shuffle else lambda x: x,
-            self._process_samples,
+            wds.map(self._process_samples),
         ]
         return wds.DataPipeline(*pipeline_steps)
 
