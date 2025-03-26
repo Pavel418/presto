@@ -8,6 +8,7 @@ from sys import platform
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import ee
+import torch
 import geopandas as gpd
 import numpy as np
 import pandas as pd
@@ -18,8 +19,10 @@ from hurry.filesize import size
 from openmapflow.ee_boundingbox import EEBoundingBox
 from shapely import geometry
 from tqdm import tqdm
+from datasets import load_dataset
 
 from .. import utils
+from .utils import construct_single_presto_input
 from .masking import MaskedExample, MaskParams
 from .pipelines.dynamicworld import DynamicWorldMonthly2020_2021, pad_array
 from .pipelines.ee_pipeline import EE_BUCKET, NPY_BUCKET, EEPipeline
@@ -464,3 +467,76 @@ class S1_S2_ERA5_SRTM_DynamicWorldMonthly_2020_2021(Dataset):
                         latlon,
                         strat,
                     )
+
+class FranceCropsDataset(Dataset):
+    def __init__(self, mask_params: Optional[MaskParams] = None):
+        super().__init__(pipelines=())
+        self.mask_params = mask_params
+        self.s2_bands = ["B2", "B3", "B4", "B5", "B6", "B7", "B8", "B8A", "B9", "B10", "B11", "B12"]
+
+    def as_webdataset(self, url: str, shuffle=True, seed: int = 42):
+        hf_dataset = load_dataset("saget-antoine/francecrops", split="train")
+
+        def generate_samples():
+            for sample in hf_dataset:
+                x = sample["x"].numpy()  # (100, 60, 12)
+                y = sample["y"]
+                for instance in x:
+                    yield {
+                        "s2": instance.astype(np.float32),
+                        "label": np.int16(y),
+                    }
+
+        pipeline_steps = [
+            wds.SimpleShardList([""]),
+            wds.split_by_worker,
+            wds.Processor(generate_samples),
+            wds.shuffle(1000) if shuffle else lambda x: x,
+            self._process_samples,
+        ]
+        return wds.DataPipeline(*pipeline_steps)
+
+    def _process_samples(self, iter: Iterable[Dict[str, Any]]):
+        for sample in iter:
+            s2_data = sample["s2"]  # (60, 12)
+            label = sample["label"]
+
+            s2_tensor = torch.tensor(s2_data / 10000.0, dtype=torch.float32)
+            label_tensor = torch.tensor(label, dtype=torch.int16)
+
+            dummy_tensor = torch.zeros_like(s2_tensor[:, :1])  # For components not in FranceCrops
+            dummy_label = torch.zeros_like(label_tensor)
+            
+            if self.mask_params is not None:
+                mask_eo, mask_dw, x_eo, y_eo, x_dw, y_dw, strat = self.mask_params.mask_data(
+                    s2_tensor, dummy_label
+                )
+                yield (
+                    mask_eo.to(torch.float32),
+                    mask_dw.to(torch.float32),
+                    x_eo.to(torch.float32),
+                    y_eo.to(torch.int16),
+                    x_dw.to(torch.float32),
+                    y_dw.to(torch.int16),
+                    torch.tensor(0),  # start_month (dummy)
+                    torch.tensor([0.0, 0.0]),  # latlon (dummy)
+                    torch.tensor(0),  # strat (dummy)
+                    label_tensor,
+                )
+            else:
+                yield (
+                    s2_tensor,
+                    dummy_label,  # dw_label (dummy)
+                    torch.tensor(0),  # start_month (dummy)
+                    torch.tensor([0.0, 0.0]),  # latlon (dummy)
+                    label_tensor,
+                )
+
+    def create_webdataset_tars(self, *args, **kwargs):
+        raise NotImplementedError("This dataset does not generate webdataset tars.")
+
+    def _create_webdataset_tar_from_big_polygon(self, *args, **kwargs):
+        raise NotImplementedError
+
+    def _create_webdataset_tar_from_small_polygons(self, *args, **kwargs):
+        raise NotImplementedError

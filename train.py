@@ -18,6 +18,7 @@ from presto import Presto
 from presto.dataops import BANDS_GROUPS_IDX, MASK_STRATEGIES, MaskParams, plot_masked
 from presto.dataops.dataset import (
     TAR_BUCKET,
+    FranceCropsDataset,
     S1_S2_ERA5_SRTM_DynamicWorldMonthly_2020_2021,
 )
 from presto.eval import (
@@ -197,7 +198,7 @@ mask_params = MaskParams(mask_strategies, mask_ratio)
 
 
 def load_dataset(url, shuffle_on_load):
-    dataset = S1_S2_ERA5_SRTM_DynamicWorldMonthly_2020_2021(mask_params=mask_params)
+    dataset = FranceCropsDataset(mask_params=mask_params)
     return dataset.as_webdataset(url, shuffle_on_load)
 
 
