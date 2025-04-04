@@ -18,6 +18,7 @@ from presto import Presto
 from presto.dataops import BANDS_GROUPS_IDX, MASK_STRATEGIES, MaskParams, plot_masked
 from presto.dataops.dataset import (
     TAR_BUCKET,
+    FranceCropsFullDataset,
     S1_S2_ERA5_SRTM_DynamicWorldMonthly_2020_2021,
 )
 from presto.eval import (
@@ -195,16 +196,28 @@ model_kwargs = json.load(Path(path_to_config).open("r"))
 logger.info("Setting up dataloaders")
 mask_params = MaskParams(mask_strategies, mask_ratio)
 
+train_dataset = FranceCropsFullDataset(
+    dataset="saget-antoine/francecrops",
+    split="train",
+    mask_params=mask_params,
+    shuffle=True,
+    seed=42,
+)
+val_dataset = FranceCropsFullDataset(
+    dataset="saget-antoine/francecrops",
+    split="train",
+    mask_params=mask_params,
+    shuffle=False,
+    seed=42,
+)
 
-def load_dataset(url, shuffle_on_load):
-    dataset = S1_S2_ERA5_SRTM_DynamicWorldMonthly_2020_2021(mask_params=mask_params)
-    return dataset.as_webdataset(url, shuffle_on_load)
+train_dataloader = torch.utils.data.DataLoader(
+    train_dataset, batch_size=32, shuffle=True, num_workers=4, pin_memory=True
+)
 
-
-train_dataset = load_dataset(train_url, shuffle_on_load=True)
-val_dataset = load_dataset(val_url, shuffle_on_load=False)
-train_dataloader = wds.WebLoader(train_dataset, batch_size=batch_size)
-val_dataloader = wds.WebLoader(val_dataset, batch_size=batch_size)
+val_dataloader = torch.utils.data.DataLoader(
+    val_dataset, batch_size=32, shuffle=False, num_workers=4, pin_memory=True
+)
 
 if dataloader_length == -1:
     logger.info("Finding train dataloader length")
@@ -307,10 +320,10 @@ with tqdm(range(num_epochs), desc="Epoch") as tqdm_epoch:
         num_updates_being_captured = 0
         train_size = 0
         model.train()
-        for epoch_step, b in enumerate(tqdm(train_dataloader, desc="Train", leave=False)):
-            mask, x, y, start_month = b[0].to(device), b[2].to(device), b[3].to(device), b[6]
-            dw_mask, x_dw, y_dw = b[1].to(device), b[4].to(device).long(), b[5].to(device).long()
-            latlons = b[7].to(device)
+        for epoch_step, b in enumerate(train_dataloader):
+            mask, x, y, start_month = b["mask"].to(device), b["x"].to(device), b["y"].to(device), b["start_month"]
+            dw_mask, x_dw, y_dw = b["mask_dw"].to(device), b["x_dw"].to(device).long(), b["y_dw"].to(device).long()
+            latlons = b["latlons"].to(device)
             # zero the parameter gradients
             optimizer.zero_grad()
             lr = adjust_learning_rate(
@@ -364,13 +377,13 @@ with tqdm(range(num_epochs), desc="Epoch") as tqdm_epoch:
                 with torch.no_grad():
                     for b in tqdm(val_dataloader, desc="Validate"):
                         mask, x, y, start_month = (
-                            b[0].to(device),
-                            b[2].to(device),
-                            b[3].to(device),
-                            b[6],
+                            b["mask"].to(device),
+                            b["x"].to(device),
+                            b["y"].to(device),
+                            b["start_month"],
                         )
-                        dw_mask, x_dw = b[1].to(device), b[4].to(device).long()
-                        y_dw, latlons = b[5].to(device).long(), b[7].to(device)
+                        dw_mask, x_dw = b["mask_dw"].to(device), b["x_dw"].to(device).long()
+                        y_dw, latlons = b["y_dw"].to(device).long(), b["latlons"].to(device)
                         # Get model outputs and calculate loss
                         y_pred, dw_pred = model(
                             x, mask=mask, dynamic_world=x_dw, latlons=latlons, month=start_month

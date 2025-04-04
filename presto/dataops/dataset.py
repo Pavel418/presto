@@ -1,3 +1,4 @@
+import json
 import logging
 import os
 import random
@@ -6,6 +7,8 @@ from collections import defaultdict
 from pathlib import Path
 from sys import platform
 from typing import Any, Dict, Iterable, List, Optional, Tuple
+
+import torch
 
 import ee
 import geopandas as gpd
@@ -18,6 +21,7 @@ from hurry.filesize import size
 from openmapflow.ee_boundingbox import EEBoundingBox
 from shapely import geometry
 from tqdm import tqdm
+from datasets import load_dataset
 
 from .. import utils
 from .masking import MaskedExample, MaskParams
@@ -25,6 +29,7 @@ from .pipelines.dynamicworld import DynamicWorldMonthly2020_2021, pad_array
 from .pipelines.ee_pipeline import EE_BUCKET, NPY_BUCKET, EEPipeline
 from .pipelines.s1_s2_era5_srtm import NUM_TIMESTEPS, S1_S2_ERA5_SRTM_2020_2021
 from .pipelines.worldcover2020 import WorldCover2020
+from utils import construct_single_presto_input
 
 METRES_PER_PATCH = 50000  # Ensures EarthEngine exports don't time out
 TAR_BUCKET = "lem-assets2"
@@ -464,3 +469,110 @@ class S1_S2_ERA5_SRTM_DynamicWorldMonthly_2020_2021(Dataset):
                         latlon,
                         strat,
                     )
+
+class FranceCropsFullDataset(Dataset):
+    def __init__(
+        self,
+        dataset: str,
+        split: str,
+        mask_params: MaskParams,
+        shuffle: bool = True,
+        seed: int = 42,
+        cache_dir: Optional[str] = None,
+    ):
+        super().__init__()
+        self.mask_params = mask_params
+        self.split = split
+        self.shuffle = shuffle
+        self.seed = seed
+        self.cache_dir = cache_dir
+
+        if cache_dir is not None and os.path.exists(cache_dir):
+            # Load metadata and check compatibility
+            metadata_path = os.path.join(cache_dir, 'metadata.json')
+            if not os.path.exists(metadata_path):
+                raise ValueError(f"Metadata not found in {cache_dir}")
+            with open(metadata_path, 'r') as f:
+                saved_metadata = json.load(f)
+            # Generate current metadata for comparison
+            current_metadata = self._get_metadata(dataset, split, mask_params, shuffle, seed)
+            if saved_metadata != current_metadata:
+                raise ValueError("Cache parameters do not match current parameters.")
+            # Load the preprocessed dataset
+            self.base_dataset = load_dataset(os.path.join(cache_dir, 'dataset'))
+        else:
+            # Preprocess the dataset
+            self.base_dataset = self._load_dataset(dataset)
+            self.base_dataset = self._preprocess()
+            # Save to cache if directory provided
+            if cache_dir is not None:
+                os.makedirs(cache_dir, exist_ok=True)
+                # Save the dataset
+                dataset_path = os.path.join(cache_dir, 'dataset')
+                self.base_dataset.save_to_disk(dataset_path)
+                # Save metadata
+                metadata = self._get_metadata(dataset, split, mask_params, shuffle, seed)
+                metadata_path = os.path.join(cache_dir, 'metadata.json')
+                with open(metadata_path, 'w') as f:
+                    json.dump(metadata, f, indent=4)
+        
+        # Ensure the dataset is in PyTorch format
+        self.base_dataset.set_format(type='torch')
+
+    def _get_metadata(self, dataset: str, split: str, mask_params: MaskParams, shuffle: bool, seed: int) -> dict:
+        """Generate metadata dictionary for parameter compatibility checks."""
+        return {
+            'dataset': dataset,
+            'split': split,
+            'mask_params': mask_params.__dict__,
+            'shuffle': shuffle,
+            'seed': seed,
+        }
+
+    def _load_dataset(self, dataset: str) -> Dataset:
+        """Load the base dataset from Hugging Face."""
+        return load_dataset(dataset, split=self.split)
+
+    def _expand_function(self, examples):
+        """Expand the time series data into individual slices."""
+        new_x = [slice for x_array in examples['x'] for slice in x_array]
+        new_y = [y_label for y_label, x_array in zip(examples['y'], examples['x']) 
+                 for _ in range(len(x_array))]
+        return {"x": new_x, "y": new_y}
+
+    def _convert_to_presto(self, examples):
+        """Convert examples to Presto input format."""
+        x_tensor = torch.tensor(examples['x'], dtype=torch.float32)
+        bands = ["B1", "B2", "B3", "B4", "B5", "B6", "B7", "B8", "B8A", "B9", "B11", "B12"]
+        presto_input, mask, dynamic = construct_single_presto_input(s2=x_tensor, s2_bands=bands)
+        latlons = np.zeros(2, dtype=np.float32)
+        start_month = 0
+
+        mask, mask_dw, x, y, x_dw, y_dw, strat = self.mask_params.mask_data(presto_input, dynamic)
+
+        return {
+            "x": x, "y": y, "mask": mask, "start_month": start_month,
+            "latlons": latlons, "mask_dw": mask_dw, "x_dw": x_dw, 
+            "y_dw": y_dw, "strategy": strat
+        }
+
+    def _preprocess(self) -> Dataset:
+        """Apply preprocessing steps including expansion and conversion."""
+        # Expand the dataset
+        expanded_dataset = self.base_dataset.map(
+            self._expand_function,
+            batched=True,
+            remove_columns=["x", "y"],
+        )
+        # Shuffle if required
+        if self.shuffle:
+            expanded_dataset = expanded_dataset.shuffle(seed=self.seed)
+        # Convert to Presto format
+        processed_dataset = expanded_dataset.map(self._convert_to_presto)
+        return processed_dataset
+
+    def __len__(self) -> int:
+        return len(self.base_dataset)
+
+    def __getitem__(self, idx) -> dict:
+        return self.base_dataset[idx]
