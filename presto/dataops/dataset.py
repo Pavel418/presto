@@ -9,6 +9,7 @@ from sys import platform
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import torch
+from torch.utils.data import Dataset as TorchDataset
 
 import ee
 import geopandas as gpd
@@ -29,7 +30,7 @@ from .pipelines.dynamicworld import DynamicWorldMonthly2020_2021, pad_array
 from .pipelines.ee_pipeline import EE_BUCKET, NPY_BUCKET, EEPipeline
 from .pipelines.s1_s2_era5_srtm import NUM_TIMESTEPS, S1_S2_ERA5_SRTM_2020_2021
 from .pipelines.worldcover2020 import WorldCover2020
-from utils import construct_single_presto_input
+from .utils import construct_single_presto_input
 
 METRES_PER_PATCH = 50000  # Ensures EarthEngine exports don't time out
 TAR_BUCKET = "lem-assets2"
@@ -470,7 +471,7 @@ class S1_S2_ERA5_SRTM_DynamicWorldMonthly_2020_2021(Dataset):
                         strat,
                     )
 
-class FranceCropsFullDataset(Dataset):
+class FranceCropsFullDataset(TorchDataset):
     def __init__(
         self,
         dataset: str,
