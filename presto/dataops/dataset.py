@@ -480,6 +480,7 @@ class FranceCropsFullDataset(TorchDataset):
         shuffle: bool = True,
         seed: int = 42,
         cache_dir: Optional[str] = None,
+        val_ratio: float = 0.1,  # Validation split ratio
     ):
         super().__init__()
         self.mask_params = mask_params
@@ -487,52 +488,57 @@ class FranceCropsFullDataset(TorchDataset):
         self.shuffle = shuffle
         self.seed = seed
         self.cache_dir = cache_dir
+        self.val_ratio = val_ratio
 
         if cache_dir is not None and os.path.exists(cache_dir):
-            # Load metadata and check compatibility
             metadata_path = os.path.join(cache_dir, 'metadata.json')
             if not os.path.exists(metadata_path):
                 raise ValueError(f"Metadata not found in {cache_dir}")
             with open(metadata_path, 'r') as f:
                 saved_metadata = json.load(f)
-            # Generate current metadata for comparison
-            current_metadata = self._get_metadata(dataset, split, mask_params, shuffle, seed)
+            current_metadata = self._get_metadata(dataset, split, mask_params, shuffle, seed, val_ratio)
             if saved_metadata != current_metadata:
                 raise ValueError("Cache parameters do not match current parameters.")
-            # Load the preprocessed dataset
             self.base_dataset = load_dataset(os.path.join(cache_dir, 'dataset'))
         else:
-            # Preprocess the dataset
             self.base_dataset = self._load_dataset(dataset)
             self.base_dataset = self._preprocess()
-            # Save to cache if directory provided
             if cache_dir is not None:
                 os.makedirs(cache_dir, exist_ok=True)
-                # Save the dataset
                 dataset_path = os.path.join(cache_dir, 'dataset')
                 self.base_dataset.save_to_disk(dataset_path)
-                # Save metadata
-                metadata = self._get_metadata(dataset, split, mask_params, shuffle, seed)
+                metadata = self._get_metadata(dataset, split, mask_params, shuffle, seed, val_ratio)
                 metadata_path = os.path.join(cache_dir, 'metadata.json')
                 with open(metadata_path, 'w') as f:
                     json.dump(metadata, f, indent=4)
         
-        # Ensure the dataset is in PyTorch format
         self.base_dataset.set_format(type='torch')
 
-    def _get_metadata(self, dataset: str, split: str, mask_params: MaskParams, shuffle: bool, seed: int) -> dict:
-        """Generate metadata dictionary for parameter compatibility checks."""
+    def _get_metadata(self, dataset: str, split: str, mask_params: MaskParams, shuffle: bool, seed: int, val_ratio: float) -> dict:
         return {
             'dataset': dataset,
             'split': split,
             'mask_params': mask_params.__dict__,
             'shuffle': shuffle,
             'seed': seed,
+            'val_ratio': val_ratio,
         }
 
     def _load_dataset(self, dataset: str) -> Dataset:
-        """Load the base dataset from Hugging Face."""
-        return load_dataset(dataset, split=self.split)
+        try:
+            return load_dataset(dataset, split=self.split)
+        except ValueError as e:
+            if self.split in ['train', 'validation']:
+                full_dataset = load_dataset(dataset, split='train')
+                split_dataset = full_dataset.train_test_split(
+                    test_size=self.val_ratio,
+                    seed=self.seed,
+                    shuffle=self.shuffle
+                )
+                target_split = 'test' if self.split == 'validation' else 'train'
+                return split_dataset[target_split]
+            else:
+                raise ValueError(f"Split {self.split} not found in dataset {dataset}") from e
 
     def _expand_function(self, examples):
         """Expand the time series data into individual slices."""
