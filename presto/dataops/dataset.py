@@ -480,7 +480,8 @@ class FranceCropsFullDataset(TorchDataset):
         shuffle: bool = True,
         seed: int = 42,
         cache_dir: Optional[str] = None,
-        val_ratio: float = 0.1,  # Validation split ratio
+        val_ratio: float = 0.1,
+        test_ratio: float = 0.1,
     ):
         super().__init__()
         self.mask_params = mask_params
@@ -489,56 +490,99 @@ class FranceCropsFullDataset(TorchDataset):
         self.seed = seed
         self.cache_dir = cache_dir
         self.val_ratio = val_ratio
+        self.test_ratio = test_ratio
+        self.dataset_name = dataset
 
-        if cache_dir is not None and os.path.exists(cache_dir):
-            metadata_path = os.path.join(cache_dir, 'metadata.json')
-            if not os.path.exists(metadata_path):
-                raise ValueError(f"Metadata not found in {cache_dir}")
-            with open(metadata_path, 'r') as f:
-                saved_metadata = json.load(f)
-            current_metadata = self._get_metadata(dataset, split, mask_params, shuffle, seed, val_ratio)
-            if saved_metadata != current_metadata:
-                raise ValueError("Cache parameters do not match current parameters.")
+        if not (0 <= val_ratio + test_ratio < 1):
+            raise ValueError("val_ratio + test_ratio must be in [0, 1)")
+        if val_ratio < 0 or test_ratio < 0:
+            raise ValueError("Split ratios cannot be negative")
+
+        if cache_dir and os.path.exists(cache_dir):
+            self._validate_cache(cache_dir)
             self.base_dataset = load_dataset(os.path.join(cache_dir, 'dataset'))
         else:
-            self.base_dataset = self._load_dataset(dataset)
+            self.base_dataset = self._load_and_split(dataset)
             self.base_dataset = self._preprocess()
-            if cache_dir is not None:
-                os.makedirs(cache_dir, exist_ok=True)
-                dataset_path = os.path.join(cache_dir, 'dataset')
-                self.base_dataset.save_to_disk(dataset_path)
-                metadata = self._get_metadata(dataset, split, mask_params, shuffle, seed, val_ratio)
-                metadata_path = os.path.join(cache_dir, 'metadata.json')
-                with open(metadata_path, 'w') as f:
-                    json.dump(metadata, f, indent=4)
+            if cache_dir:
+                self._save_cache(cache_dir)
         
         self.base_dataset.set_format(type='torch')
 
-    def _get_metadata(self, dataset: str, split: str, mask_params: MaskParams, shuffle: bool, seed: int, val_ratio: float) -> dict:
+    def _validate_cache(self, cache_dir: str):
+        """Ensure cached parameters match current settings"""
+        metadata_path = os.path.join(cache_dir, 'metadata.json')
+        if not os.path.exists(metadata_path):
+            raise ValueError(f"Metadata not found in {cache_dir}")
+        
+        with open(metadata_path, 'r') as f:
+            saved_metadata = json.load(f)
+        
+        current_metadata = self._get_metadata()
+        if saved_metadata != current_metadata:
+            raise ValueError(
+                f"Cache mismatch. Delete or use different cache directory.\n"
+                f"Saved: {saved_metadata}\nCurrent: {current_metadata}"
+            )
+
+    def _get_metadata(self) -> dict:
+        """Generate parameter signature with stratification info"""
         return {
-            'dataset': dataset,
-            'split': split,
-            'mask_params': mask_params.__dict__,
-            'shuffle': shuffle,
-            'seed': seed,
-            'val_ratio': val_ratio,
+            'dataset': self.dataset_name,
+            'split': self.split,
+            'mask_params': self.mask_params.__dict__,
+            'shuffle': self.shuffle,
+            'seed': self.seed,
+            'val_ratio': self.val_ratio,
+            'test_ratio': self.test_ratio,
+            'stratify_by': 'y',
+            'split_method': 'stratified'
         }
 
-    def _load_dataset(self, dataset: str) -> Dataset:
+    def _save_cache(self, cache_dir: str):
+        """Persist processed dataset with complete metadata"""
+        os.makedirs(cache_dir, exist_ok=True)
+        dataset_path = os.path.join(cache_dir, 'dataset')
+        self.base_dataset.save_to_disk(dataset_path)
+        
+        metadata_path = os.path.join(cache_dir, 'metadata.json')
+        with open(metadata_path, 'w') as f:
+            json.dump(self._get_metadata(), f, indent=4)
+
+    def _load_and_split(self, dataset: str) -> Dataset:
+        """Handle stratified three-way split from original dataset"""
         try:
             return load_dataset(dataset, split=self.split)
         except ValueError as e:
-            if self.split in ['train', 'validation']:
-                full_dataset = load_dataset(dataset, split='train')
-                split_dataset = full_dataset.train_test_split(
-                    test_size=self.val_ratio,
+            if self.split not in ['train', 'validation', 'test']:
+                raise ValueError(f"Invalid split: {self.split}") from e
+
+            full_dataset = load_dataset(dataset, split='train')
+            total_val_test = self.val_ratio + self.test_ratio
+
+            train_temp = full_dataset.train_test_split(
+                test_size=total_val_test,
+                seed=self.seed,
+                shuffle=True,
+                stratify_by_column='y'
+            )
+
+            if total_val_test > 0:
+                test_frac = self.test_ratio / total_val_test
+                val_test = train_temp['test'].train_test_split(
+                    test_size=test_frac,
                     seed=self.seed,
-                    shuffle=self.shuffle
+                    shuffle=True,
+                    stratify_by_column='y'
                 )
-                target_split = 'test' if self.split == 'validation' else 'train'
-                return split_dataset[target_split]
             else:
-                raise ValueError(f"Split {self.split} not found in dataset {dataset}") from e
+                val_test = {'train': Dataset.from_dict({}), 'test': Dataset.from_dict({})}
+
+            return {
+                'train': train_temp['train'],
+                'validation': val_test['train'],
+                'test': val_test['test']
+            }[self.split]
 
     def _expand_function(self, examples):
         """Expand the time series data into individual slices."""
