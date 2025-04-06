@@ -2,6 +2,7 @@ import argparse
 import json
 import logging
 import os
+import sys
 import warnings
 from pathlib import Path
 from typing import List, Tuple, cast
@@ -43,6 +44,17 @@ from presto.utils import (
 
 logger = logging.getLogger("__main__")
 os.environ["GOOGLE_CLOUD_PROJECT"] = "large-earth-model"
+
+sys.argv = [
+    'train.py',  # placeholder for script name
+    '--train_url', 'data/dw_144_mini_shard_44.tar',
+    '--val_url', 'data/dw_144_mini_shard_44.tar',
+    '--val_per_n_steps', '1',
+    '--cropharvest_per_n_validations', '0',
+    '--skip_finetuning'
+]
+__file__ = 'train.py'
+os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
 
 # Parse command line arguments
 argparser = argparse.ArgumentParser()
@@ -202,13 +214,15 @@ train_dataset = FranceCropsFullDataset(
     mask_params=mask_params,
     shuffle=True,
     seed=42,
+    cache_dir="./cache_train"
 )
 val_dataset = FranceCropsFullDataset(
     dataset="saget-antoine/francecrops",
-    split="train",
+    split="val",
     mask_params=mask_params,
     shuffle=False,
     seed=42,
+    cache_dir="./cache_val"
 )
 
 train_dataloader = torch.utils.data.DataLoader(
@@ -343,21 +357,24 @@ with tqdm(range(num_epochs), desc="Epoch") as tqdm_epoch:
             # value was masked
             mask[:, 1:, BANDS_GROUPS_IDX["SRTM"]] = False
             loss = mse(y_pred[mask], y[mask])
-            dw_loss = ce(dw_pred[dw_mask], y_dw[dw_mask])
+
+            # Apply mask
+            masked_logits = dw_pred[dw_mask]
+            masked_labels = y_dw[dw_mask]
+
             num_eo_masked, num_dw_masked = len(y_pred[mask]), len(dw_pred[dw_mask])
             with torch.no_grad():
                 ratio = num_dw_masked / max(num_eo_masked, 1)
                 # weight shouldn't be > 1
                 weight = min(1, dynamic_world_loss_weight * ratio)
 
-            total_loss = loss + weight * dw_loss
+            total_loss = loss
             total_loss.backward()
             optimizer.step()
 
             current_batch_size = len(x)
             total_train_loss += total_loss.item()
             total_eo_train_loss += loss.item() * num_eo_masked
-            total_dw_train_loss += dw_loss.item() * num_dw_masked
             total_num_eo_values_masked += num_eo_masked
             total_num_dw_values_masked += num_dw_masked
             num_updates_being_captured += 1
@@ -393,18 +410,16 @@ with tqdm(range(num_epochs), desc="Epoch") as tqdm_epoch:
                         # value was masked
                         mask[:, 1:, BANDS_GROUPS_IDX["SRTM"]] = False
                         loss = mse(y_pred[mask], y[mask])
-                        dw_loss = ce(dw_pred[dw_mask], y_dw[dw_mask])
                         num_eo_masked, num_dw_masked = len(y_pred[mask]), len(dw_pred[dw_mask])
                         with torch.no_grad():
                             ratio = num_dw_masked / max(num_eo_masked, 1)
                             # weight shouldn't be > 1
                             weight = min(1, dynamic_world_loss_weight * ratio)
-                        total_loss = loss + weight * dw_loss
+                        total_loss = loss
                         current_batch_size = len(x)
                         val_size += current_batch_size
                         total_val_loss += total_loss.item()
                         total_eo_val_loss += loss.item() * num_eo_masked
-                        total_dw_val_loss += dw_loss.item() * num_dw_masked
                         total_val_num_eo_values_masked += num_eo_masked
                         total_val_num_dw_values_masked += num_dw_masked
                         num_val_updates_captured += 1
@@ -480,66 +495,3 @@ with tqdm(range(num_epochs), desc="Epoch") as tqdm_epoch:
                 model.train()
 
 logger.info(f"Done training, best model saved to {best_model_path}")
-
-if not skip_finetuning:
-    # retreive the best model
-    logger.info("Loading best model: %s" % best_model_path)
-    best_model = torch.load(best_model_path)
-    model.load_state_dict(best_model)
-
-    logger.info("Loading evaluation tasks")
-    seeds = [0, DEFAULT_SEED, 84]
-    eval_task_list: List[EvalTask] = [
-        *[
-            CropHarvestEval(country=country, ignore_dynamic_world=idw, seed=seed)
-            for country in ["Kenya", "Togo", "Brazil"]
-            for idw in [True, False]
-            for seed in seeds
-        ],
-        *[FuelMoistureEval(seed=seed) for seed in seeds],
-        *[AlgaeBloomsEval(seed=seed) for seed in seeds],
-        *[
-            EuroSatEval(rgb=rgb, input_patch_size=ps, seed=seed)
-            for rgb in [True, False]
-            for ps in [1, 2, 4, 8, 16, 32, 64]
-            for seed in seeds
-        ],
-        *[TreeSatEval(subset=subset, seed=seed) for subset in ["S1", "S2"] for seed in seeds],
-        *[
-            CropHarvestEval("Togo", ignore_dynamic_world=True, num_timesteps=x, seed=seed)
-            for x in range(1, 12)
-            for seed in seeds
-        ],
-        *[
-            CropHarvestEval("Kenya", ignore_dynamic_world=True, num_timesteps=x, seed=seed)
-            for x in range(1, 12)
-            for seed in seeds
-        ],
-    ]
-
-    result_dict = {}
-    for eval_task in tqdm(eval_task_list, desc="Full Evaluation"):
-        model_modes = ["finetune", "Regression", "Random Forest"]
-        if "EuroSat" in eval_task.name:
-            model_modes = ["Regression", "Random Forest", "KNNat5", "KNNat20", "KNNat100"]
-        if "TreeSat" in eval_task.name:
-            model_modes = ["Random Forest"]
-        logger.info(eval_task.name)
-
-        results = eval_task.finetuning_results(model, model_modes=model_modes)
-        result_dict.update(results)
-
-        if wandb_enabled:
-            wandb.log(results)
-
-        logger.info(json.dumps(results, indent=2))
-        eval_task.clear_data()
-
-    eval_results_file = logging_dir / "results.json"
-    logger.info("Saving eval results to file %s" % eval_results_file)
-    with open(eval_results_file, "w") as f:
-        json.dump(result_dict, f)
-
-if wandb_enabled and run:
-    run.finish()
-    logger.info(f"Wandb url: {run.url}")
