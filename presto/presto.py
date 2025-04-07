@@ -302,13 +302,6 @@ class Encoder(nn.Module):
             group_mask = torch.max(mask[:, indices, channel_idxs], dim=-1)[0]
             all_masks.append(group_mask)
 
-        channel_embedding = repeat(channel_embedding, "d -> b t d", b=x.shape[0], t=x.shape[1])
-        positional_embedding = torch.cat(
-            (channel_embedding, positional_embedding), dim=-1
-        )
-        tokens += positional_embedding
-        all_tokens.append(tokens)
-
         x = torch.cat(all_tokens, dim=1)  # [batch, timesteps, embedding_dim]
         mask = torch.cat(all_masks, dim=1)  # [batch, timesteps]
         x, orig_indices, upd_mask = self.mask_tokens(x, mask)
