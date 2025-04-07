@@ -304,7 +304,9 @@ class Encoder(nn.Module):
 
         x = torch.cat(all_tokens, dim=1)  # [batch, timesteps, embedding_dim]
         mask = torch.cat(all_masks, dim=1)  # [batch, timesteps]
+        print(f"mask before mask_tokens: {mask.shape}")
         x, orig_indices, upd_mask = self.mask_tokens(x, mask)
+        print(f"upd_mask after mask_tokens: {upd_mask.shape}")
 
         upd_mask = torch.cat((torch.zeros(x.shape[0])[:, None].to(device), upd_mask), dim=1)
         orig_indices = torch.cat(
