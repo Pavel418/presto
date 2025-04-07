@@ -492,7 +492,7 @@ class Decoder(nn.Module):
         num_channel_groups = len(self.band_group_to_idx)
         print(f"[Info] num_channel_groups: {num_channel_groups}")
 
-        num_timesteps = int((x.shape[1] - 2) / (num_channel_groups - 1))
+        num_timesteps = int(x.shape[1] / num_channel_groups)
         print(f"[Info] num_timesteps: {num_timesteps}")
 
         remove_mask = torch.full(size=(num_timesteps * num_channel_groups,), fill_value=False)
