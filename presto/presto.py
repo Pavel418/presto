@@ -272,61 +272,98 @@ class Encoder(nn.Module):
         mask: Optional[torch.Tensor] = None,
         eval_task: bool = True,
     ):
+        device = x.device
 
+        # Initialize mask if None
         if mask is None:
-            mask = torch.zeros_like(x, device=x.device).float()
+            mask = torch.zeros_like(x, device=device).float()
+        print(f"[Encoder] mask initialized with shape: {mask.shape} (same as input x)")
 
+        # Create positional embeddings expanded to match batch size
         positional_embedding = repeat(
             self.pos_embed[:, : x.shape[1], :], "b t d -> (repeat b) t d", repeat=x.shape[0]
         )
+        print(f"[Encoder] positional_embedding shape: {positional_embedding.shape} [batch, timesteps, pos_embed_dim]")
 
-        # we assume the number of masked patches is the same
-        # for all items in the batch. Otherwise things become a headache
         all_tokens, all_masks = [], []
 
+        # Process each channel group
         for channel_group, channel_idxs in self.band_groups.items():
+            print(f"\n[Encoder] Processing channel group: {channel_group} (indices: {channel_idxs})")
+
+            # Extract tokens via patch embedding for this channel group
             tokens = self.eo_patch_embed[channel_group](x[:, :, channel_idxs])
-            channel_embedding = self.channel_embed(
+            print(f"[Encoder] tokens shape after eo_patch_embed: {tokens.shape} [batch, timesteps, embed_dim]")
+
+            # Get channel-specific embedding and expand to match batch/timesteps
+            channel_embed = self.channel_embed(
                 torch.tensor(self.band_group_to_idx[channel_group]).long().to(device)
             )
-            channel_embedding = repeat(channel_embedding, "d -> b t d", b=x.shape[0], t=x.shape[1])
-            
+            channel_embedding = repeat(channel_embed, "d -> b t d", b=x.shape[0], t=x.shape[1])
+            print(f"[Encoder] channel_embedding shape: {channel_embedding.shape} [batch, timesteps, channel_embed_dim]")
+
+            # Combine channel and positional embeddings
             channel_wise_positional_embedding = torch.cat(
                 (channel_embedding, positional_embedding), dim=-1
             )
-            indices = slice(None)
+            print(f"[Encoder] channel_wise_positional_embedding shape: {channel_wise_positional_embedding.shape} [combined_dim]")
 
-            tokens = tokens[:, indices]
+            # Add combined embeddings to tokens
             tokens += channel_wise_positional_embedding
+            print(f"[Encoder] tokens shape after embedding addition: {tokens.shape} [batch, timesteps, embed_dim]")
+
+            # Compute mask for this group (max over channels)
+            group_mask = torch.max(mask[:, :, channel_idxs], dim=-1)[0]
+            print(f"[Encoder] group_mask shape: {group_mask.shape} [batch, timesteps]")
+
             all_tokens.append(tokens)
-            group_mask = torch.max(mask[:, indices, channel_idxs], dim=-1)[0]
             all_masks.append(group_mask)
 
-        x = torch.cat(all_tokens, dim=1)  # [batch, timesteps, embedding_dim]
-        mask = torch.cat(all_masks, dim=1)  # [batch, timesteps]
-        x, orig_indices, upd_mask = self.mask_tokens(x, mask)
+        # Concatenate tokens and masks across channel groups
+        x = torch.cat(all_tokens, dim=1)
+        mask = torch.cat(all_masks, dim=1)
+        print(f"\n[Encoder] x shape after channel concatenation: {x.shape} [batch, total_timesteps, embed_dim]")
+        print(f"[Encoder] mask shape after concatenation: {mask.shape} [batch, total_timesteps]")
 
+        # Apply token masking and get indices
+        x, orig_indices, upd_mask = self.mask_tokens(x, mask)
+        print(f"\n[Encoder] x shape after masking: {x.shape} [batch, total_timesteps, embed_dim]")
+        print(f"[Encoder] orig_indices shape: {orig_indices.shape} [batch, num_masked_tokens]")
+        print(f"[Encoder] upd_mask shape: {upd_mask.shape} [batch, total_timesteps] (1=masked)")
+
+        # Adjust indices to account for [CLS] token (prepended zero)
         orig_indices = torch.cat(
             (torch.zeros(x.shape[0])[:, None].to(device).int(), orig_indices + 1),
             dim=1,
         )
-        print(f"[Encoder] x.shape before blocks: {x.shape}")
-        # apply Transformer blocks
+        print(f"[Encoder] orig_indices shape after CLS adjustment: {orig_indices.shape} [batch, num_masked+1]")
+
+        # Pass through transformer blocks
+        print(f"\n[Encoder] x shape before transformer blocks: {x.shape}")
         for blk in self.blocks:
             x = blk(x, attn_mask=~upd_mask.bool())
-        print(f"[Encoder] x.shape after blocks: {x.shape}")
+        print(f"[Encoder] x shape after transformer blocks: {x.shape}")
 
-        # mask will be a boolean of shape [batch, total_num_tokens]
         if eval_task:
-            # set masked tokens to 0
+            # Compute mean of unmasked tokens
             x_for_mean = x * (1 - upd_mask.unsqueeze(-1))
-            x_mean = x_for_mean.sum(dim=1) / torch.sum(1 - upd_mask, -1, keepdim=True)
-            # note: page 6 of https://arxiv.org/pdf/2104.02057.pdf
-            # suggests removing the norm layer
-            return self.norm(x_mean)
-        
+            print(f"\n[Encoder] x_for_mean shape: {x_for_mean.shape} [mask-adjusted features]")
 
-        return self.norm(x), orig_indices, upd_mask
+            x_mean = x_for_mean.sum(dim=1)
+            print(f"[Encoder] x_mean shape before normalization: {x_mean.shape} [batch, embed_dim]")
+
+            x_mean = x_mean / torch.sum(1 - upd_mask, -1, keepdim=True)
+            print(f"[Encoder] x_mean shape after normalization: {x_mean.shape} [batch, embed_dim]")
+
+            # Apply final layer norm
+            output = self.norm(x_mean)
+            print(f"[Encoder] Final output shape (eval_mode): {output.shape} [batch, embed_dim]")
+            return output
+
+        # Return full sequence if not in eval mode
+        output = self.norm(x)
+        print(f"\n[Encoder] Final output shape (non-eval_mode): {output.shape} [full sequence]")
+        return output, orig_indices, upd_mask
 
 
 class Decoder(nn.Module):
