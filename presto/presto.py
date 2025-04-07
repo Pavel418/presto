@@ -226,7 +226,7 @@ class Encoder(nn.Module):
             torch.zeros(1, max_sequence_length, pos_embedding_size), requires_grad=False
         )
         self.channel_embed = nn.Embedding(
-            num_embeddings=len(self.band_groups) + 1, embedding_dim=channel_embedding_size
+            num_embeddings=len(self.band_groups), embedding_dim=channel_embedding_size
         )
 
         self.initialize_weights()
