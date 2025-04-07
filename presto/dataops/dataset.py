@@ -23,7 +23,7 @@ from openmapflow.ee_boundingbox import EEBoundingBox
 from shapely import geometry
 from tqdm import tqdm
 import datasets
-from datasets import load_dataset, ClassLabel, Value
+from datasets import load_dataset, ClassLabel, Value, load_from_disk
 
 from .. import utils
 from .masking import MaskedExample, MaskParams
@@ -520,7 +520,7 @@ class FranceCropsFullDataset(TorchDataset):
 
         if cache_dir and os.path.exists(cache_dir):
             self._validate_cache(cache_dir)
-            self.base_dataset = load_dataset(os.path.join(cache_dir, 'dataset'))
+            self.base_dataset = load_from_disk(os.path.join(cache_dir, 'dataset'))
         else:
             self.base_dataset = self._load_and_split(dataset)
             self.base_dataset = self._preprocess()
