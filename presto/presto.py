@@ -509,6 +509,7 @@ class Decoder(nn.Module):
         positional_embedding = positional_embedding[:, ~remove_mask]
         print(f"[positional_embedding after masking] shape: {positional_embedding.shape}")
 
+        print(f"[channel_embeddings] shape: {self.channel_embeddings.weight.shape}")
         channel_embeddings = torch.repeat_interleave(
             self.channel_embeddings.weight, repeats=num_timesteps, dim=0
         )
