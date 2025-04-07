@@ -22,7 +22,8 @@ from hurry.filesize import size
 from openmapflow.ee_boundingbox import EEBoundingBox
 from shapely import geometry
 from tqdm import tqdm
-from datasets import load_dataset
+import datasets
+from datasets import load_dataset, ClassLabel, Value
 
 from .. import utils
 from .masking import MaskedExample, MaskParams
@@ -549,7 +550,7 @@ class FranceCropsFullDataset(TorchDataset):
         with open(metadata_path, 'w') as f:
             json.dump(self._get_metadata(), f, indent=4)
 
-    def _load_and_split(self, dataset: str) -> Dataset:
+    def _load_and_split(self, dataset: str) -> datasets.Dataset:
         """Handle stratified three-way split from original dataset"""
         try:
             return load_dataset(dataset, split=self.split)
@@ -560,7 +561,17 @@ class FranceCropsFullDataset(TorchDataset):
             full_dataset = load_dataset(dataset, split='train')
             total_val_test = self.val_ratio + self.test_ratio
 
-            train_temp = full_dataset.train_test_split(
+            # Extract unique values from the 'y' column in the train split
+            unique_values = sorted(set(full_dataset['train']['y']))
+            class_names = [str(val) for val in unique_values]
+
+            features = full_dataset.features.copy()
+            features['y'] = ClassLabel(names=class_names)
+
+            # Cast the dataset with the new features (ensuring y is ClassLabel for stratification)
+            casted_dataset = full_dataset.cast(features)
+
+            train_temp = casted_dataset.train_test_split(
                 test_size=total_val_test,
                 seed=self.seed,
                 shuffle=True,
@@ -576,13 +587,24 @@ class FranceCropsFullDataset(TorchDataset):
                     stratify_by_column='y'
                 )
             else:
-                val_test = {'train': Dataset.from_dict({}), 'test': Dataset.from_dict({})}
+                empty_ds = Dataset.from_dict({})
+                val_test = {'train': empty_ds, 'test': empty_ds}
 
-            return {
+            split_dataset = {
                 'train': train_temp['train'],
                 'validation': val_test['train'],
                 'test': val_test['test']
             }[self.split]
+
+            def convert_y(example):
+                return {"y": int(example["y"])}
+            split_dataset = split_dataset.map(convert_y)
+
+            new_features = split_dataset.features.copy()
+            new_features["y"] = Value("int64")
+            split_dataset = split_dataset.cast(new_features)
+
+            return split_dataset
 
     def _expand_function(self, examples):
         """Expand the time series data into individual slices."""
