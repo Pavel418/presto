@@ -322,6 +322,8 @@ class Encoder(nn.Module):
             # note: page 6 of https://arxiv.org/pdf/2104.02057.pdf
             # suggests removing the norm layer
             return self.norm(x_mean)
+        
+
         return self.norm(x), orig_indices, upd_mask
 
 
@@ -620,6 +622,10 @@ class Presto(Seq2Seq):
             mask=mask,
             eval_task=False,
         )
+
+        print(f"[Presto] x.shape: {x.shape}")
+        print(f"[Presto] orig_indices.shape: {orig_indices.shape}")
+        print(f"[Presto] x_mask.shape: {x_mask.shape}")
 
         return self.decoder(x, orig_indices, x_mask)
 
