@@ -526,14 +526,6 @@ class Decoder(nn.Module):
         )
         print(f"[positional_embedding after concat with channel_embeddings] shape: {positional_embedding.shape}")
 
-        zero_embedding = torch.zeros_like(positional_embedding[:, 0:1, :])
-        print(f"[zero_embedding] shape: {zero_embedding.shape}")
-
-        positional_embedding = torch.cat(
-            [zero_embedding, positional_embedding], dim=1
-        )
-        print(f"[positional_embedding after adding zero token] shape: {positional_embedding.shape}")
-
         x += positional_embedding
         print(f"[Output] x.shape after adding positional_embedding: {x.shape}")
 
