@@ -42,8 +42,8 @@ def make_mask(strategy: str, mask_ratio: float) -> Tuple[np.ndarray]:
     # SRTM is included here, but ignored by Presto
     mask = np.full((NUM_TIMESTEPS, len(BANDS_GROUPS_IDX)), False)
     print(f"mask shape: {mask.shape}")
-    num_tokens_to_mask = int(((NUM_TIMESTEPS * len(BANDS_GROUPS_IDX)) + 1) * mask_ratio)
-    print(f"num_tokens_to_mask not multiplied by mask_ratio: {int((NUM_TIMESTEPS * len(BANDS_GROUPS_IDX)) + 1)}")
+    num_tokens_to_mask = int((NUM_TIMESTEPS * len(BANDS_GROUPS_IDX)) * mask_ratio)
+    print(f"num_tokens_to_mask not multiplied by mask_ratio: {int(NUM_TIMESTEPS * len(BANDS_GROUPS_IDX))}")
     print(f"num_tokens_to_mask: {num_tokens_to_mask}")
 
     def mask_topography(num_tokens_to_mask, mask_ratio):
@@ -61,6 +61,9 @@ def make_mask(strategy: str, mask_ratio: float) -> Tuple[np.ndarray]:
             np.random.shuffle(idx)
             idx = idx[:num_tokens_to_mask]
             all_tokens_mask[idx] = True
+            print("all_tokens_mask shape: ", all_tokens_mask.shape)
+            print("NUM_TIMESTEPS: ", NUM_TIMESTEPS)
+            print("all_tokens_mask[NUM_TIMESTEPS: ] shape: ", all_tokens_mask[NUM_TIMESTEPS:].shape)
             mask = all_tokens_mask[NUM_TIMESTEPS:].reshape((NUM_TIMESTEPS, len(BANDS_GROUPS_IDX)))
         return mask
 
