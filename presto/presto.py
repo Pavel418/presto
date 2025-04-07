@@ -441,7 +441,7 @@ class Decoder(nn.Module):
         print(f"[Decoder] max_sequence_length: {self.max_sequence_length}")
 
         # Positional embedding size is half of remaining
-        pos_embed_shape = (1, max_sequence_length, int(remaining_embeddings) // 2)
+        pos_embed_shape = (1, max_sequence_length, remaining_embeddings)
         self.pos_embed = nn.Parameter(
             torch.zeros(pos_embed_shape),
             requires_grad=False,
