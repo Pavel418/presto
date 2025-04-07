@@ -427,14 +427,27 @@ class Decoder(nn.Module):
             }
         )
         self.channel_embeddings = channel_embeddings
+        print(f"[Decoder] channel_embeddings.weight.shape: {channel_embeddings.weight.shape}")
+
         channel_embedding_dims = channel_embeddings.weight.shape[-1]
+        print(f"[Decoder] channel_embedding_dims: {channel_embedding_dims}")
+
         remaining_embeddings = decoder_embed_dim - channel_embedding_dims
-        # the positional + channel embedding
+        print(f"[Decoder] decoder_embed_dim: {decoder_embed_dim}")
+        print(f"[Decoder] remaining_embeddings (for positional): {remaining_embeddings}")
+
+        # Save max sequence length
         self.max_sequence_length = max_sequence_length
+        print(f"[Decoder] max_sequence_length: {self.max_sequence_length}")
+
+        # Positional embedding size is half of remaining
+        pos_embed_shape = (1, max_sequence_length, int(remaining_embeddings) // 2)
         self.pos_embed = nn.Parameter(
-            torch.zeros(1, max_sequence_length, int(remaining_embeddings) // 2),
+            torch.zeros(pos_embed_shape),
             requires_grad=False,
         )
+        print(f"[Decoder] self.pos_embed.shape: {self.pos_embed.shape}")
+
 
         self.initialize_weights()
 
