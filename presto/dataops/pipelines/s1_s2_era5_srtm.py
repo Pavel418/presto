@@ -143,6 +143,8 @@ class S1_S2_ERA5_SRTM(EEPipeline):
             x = (x + torch.tensor(ADD_BY)) / torch.tensor(DIVIDE_BY)
 
         if len(x.shape) == 2:
+            print(f"x shape: {x.shape}")
+            print(f"NORMED_BANDS length: {len(NORMED_BANDS)}")
             x = x[:, keep_indices]
             x[:, NORMED_BANDS.index("NDVI")] = cls.calculate_ndvi(x)
         else:
