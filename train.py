@@ -349,10 +349,6 @@ with tqdm(range(num_epochs), desc="Epoch") as tqdm_epoch:
             y_pred = model(
                 x, mask=mask
             )
-            # set all SRTM timesteps except the first one to unmasked, so that
-            # they will get ignored by the loss function even if the SRTM
-            # value was masked
-            mask[:, 1:, BANDS_GROUPS_IDX["SRTM"]] = False
             loss = mse(y_pred[mask], y[mask])
 
             num_eo_masked = len(y_pred[mask])
