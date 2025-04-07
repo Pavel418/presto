@@ -29,7 +29,6 @@ from presto.eval import (
     EuroSatEval,
     EvalTask,
     FuelMoistureEval,
-    TreeSatEval,
 )
 from presto.model import LossWrapper, adjust_learning_rate, param_groups_weight_decay
 from presto.utils import (

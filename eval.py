@@ -19,7 +19,6 @@ from presto.eval import (
     EuroSatEval,
     EvalTask,
     FuelMoistureEval,
-    TreeSatEval,
 )
 from presto.presto import Presto
 from presto.utils import (
@@ -123,11 +122,6 @@ eval_task_list: List[EvalTask] = [
         EuroSatEval(rgb=rgb, input_patch_size=ps, seed=seed, aggregates=["mean"])
         for rgb in [True, False]
         for ps in [1, 2, 4, 8, 16, 32, 64]
-        for seed in seeds
-    ],
-    *[
-        TreeSatEval(subset=subset, seed=seed, aggregates=["mean"])
-        for subset in ["S1", "S2"]
         for seed in seeds
     ],
     *[
