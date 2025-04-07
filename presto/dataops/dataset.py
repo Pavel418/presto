@@ -562,7 +562,7 @@ class FranceCropsFullDataset(TorchDataset):
             total_val_test = self.val_ratio + self.test_ratio
 
             # Extract unique values from the 'y' column in the train split
-            unique_values = sorted(set(full_dataset['train']['y']))
+            unique_values = sorted(set(full_dataset['y']))
             class_names = [str(val) for val in unique_values]
 
             features = full_dataset.features.copy()
