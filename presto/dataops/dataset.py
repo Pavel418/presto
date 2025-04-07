@@ -472,6 +472,25 @@ class S1_S2_ERA5_SRTM_DynamicWorldMonthly_2020_2021(Dataset):
                         strat,
                     )
 
+def convert_to_serializable(obj):
+    """Recursively convert non-serializable types to serializable ones."""
+    if isinstance(obj, (np.integer, np.int_, np.int64, np.int32, np.int16, np.int8)):
+        return int(obj)
+    elif isinstance(obj, (np.floating, np.float64, np.float32, np.float16)):
+        return float(obj)
+    elif isinstance(obj, np.ndarray):
+        return obj.tolist()
+    elif isinstance(obj, dict):
+        return {k: convert_to_serializable(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [convert_to_serializable(v) for v in obj]
+    elif isinstance(obj, (bool, str, type(None))):
+        return obj
+    elif hasattr(obj, '__dict__'):
+        return convert_to_serializable(obj.__dict__)
+    else:
+        return str(obj)  # Fallback for unexpected types
+
 class FranceCropsFullDataset(TorchDataset):
     def __init__(
         self,
@@ -527,8 +546,8 @@ class FranceCropsFullDataset(TorchDataset):
             )
 
     def _get_metadata(self) -> dict:
-        """Generate parameter signature with stratification info"""
-        return {
+        """Generate parameter signature with serializable data types"""
+        metadata = {
             'dataset': self.dataset_name,
             'split': self.split,
             'mask_params': self.mask_params.__dict__,
@@ -539,16 +558,17 @@ class FranceCropsFullDataset(TorchDataset):
             'stratify_by': 'y',
             'split_method': 'stratified'
         }
+        return convert_to_serializable(metadata)
 
     def _save_cache(self, cache_dir: str):
-        """Persist processed dataset with complete metadata"""
+        """Persist processed dataset with metadata"""
         os.makedirs(cache_dir, exist_ok=True)
         dataset_path = os.path.join(cache_dir, 'dataset')
         self.base_dataset.save_to_disk(dataset_path)
         
         metadata_path = os.path.join(cache_dir, 'metadata.json')
         with open(metadata_path, 'w') as f:
-            json.dump(self._get_metadata(), f, indent=4)
+            json.dump(self._get_metadata(), f, indent=4, default=str)
 
     def _load_and_split(self, dataset: str) -> datasets.Dataset:
         """Handle stratified three-way split from original dataset"""

@@ -135,20 +135,14 @@ class S1_S2_ERA5_SRTM(EEPipeline):
 
     @classmethod
     def normalize(cls, x):
-        # remove the b9 band
-        keep_indices = [idx for idx, val in enumerate(BANDS) if val != "B9"]
         if isinstance(x, np.ndarray):
             x = ((x + ADD_BY) / DIVIDE_BY).astype(np.float32)
         else:
             x = (x + torch.tensor(ADD_BY)) / torch.tensor(DIVIDE_BY)
 
         if len(x.shape) == 2:
-            print(f"x shape: {x.shape}")
-            print(f"NORMED_BANDS length: {len(NORMED_BANDS)}")
-            x = x[:, keep_indices]
             x[:, NORMED_BANDS.index("NDVI")] = cls.calculate_ndvi(x)
         else:
-            x = x[:, :, keep_indices]
             x[:, :, NORMED_BANDS.index("NDVI")] = cls.calculate_ndvi(x)
         return x
 
