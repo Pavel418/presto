@@ -54,15 +54,9 @@ def construct_single_presto_input(
         x[:, input_to_output_mapping] = data[:, kept_input_band_idxs]
         mask[:, input_to_output_mapping] = 0
 
-    keep_indices = [idx for idx, val in enumerate(BANDS) if val != "B9"]
-    mask = mask[:, keep_indices]
-
     if normalize:
-        # normalize includes x = x[:, keep_indices]
         x = S1_S2_ERA5_SRTM.normalize(x)
         if s2_bands is not None:
             if ("B8" in s2_bands) and ("B4" in s2_bands):
                 mask[:, NORMED_BANDS.index("NDVI")] = 0
-    else:
-        x = x[:, keep_indices]
     return x, mask
