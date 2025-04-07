@@ -251,18 +251,33 @@ class Encoder(nn.Module):
 
     @staticmethod
     def mask_tokens(x, mask):
-        mask = mask.bool()
-        # https://stackoverflow.com/a/68621610/2332296
-        # move all non-masked values to the front of their rows
-        sorted_mask, indices = torch.sort((~mask).int(), dim=1, descending=True, stable=True)
-        x = x.gather(1, indices[:, :, None].expand_as(x))
-        # set masked values to 0 (not really necessary since we'll ignore them anyway)
-        x = x * sorted_mask.unsqueeze(-1)
+        print(f"[Input] x.shape: {x.shape}")
+        print(f"[Input] mask.shape: {mask.shape}")
 
-        # cut off to the length of the longest sequence
+        mask = mask.bool()
+        print(f"[mask after bool()] dtype: {mask.dtype}, shape: {mask.shape}")
+
+        # Move all non-masked values to the front of their rows
+        sorted_mask, indices = torch.sort((~mask).int(), dim=1, descending=True, stable=True)
+        print(f"[sorted_mask] shape: {sorted_mask.shape}")
+        print(f"[indices] shape: {indices.shape}")
+
+        x = x.gather(1, indices[:, :, None].expand_as(x))
+        print(f"[x after gather] shape: {x.shape}")
+
+        # Set masked values to 0
+        x = x * sorted_mask.unsqueeze(-1)
+        print(f"[x after masking] shape: {x.shape}")
+
+        # Cut off to the length of the longest unmasked sequence
         max_length = sorted_mask.sum(-1).max()
+        print(f"[max_length] value: {max_length}")
+
         x = x[:, :max_length]
+        print(f"[x after trimming] shape: {x.shape}")
+
         updated_mask = 1 - sorted_mask[:, :max_length]
+        print(f"[updated_mask] shape: {updated_mask.shape}")
 
         return x, indices, updated_mask
 
