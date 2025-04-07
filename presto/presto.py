@@ -279,6 +279,8 @@ class Encoder(nn.Module):
             mask = torch.zeros_like(x, device=device).float()
         print(f"[Encoder] mask initialized with shape: {mask.shape} (same as input x)")
 
+        print(f"[Encoder] pos_embed shape: {self.pos_embed.shape} [1, max_sequence_length, pos_embed_dim]")
+
         # Create positional embeddings expanded to match batch size
         positional_embedding = repeat(
             self.pos_embed[:, : x.shape[1], :], "b t d -> (repeat b) t d", repeat=x.shape[0]
