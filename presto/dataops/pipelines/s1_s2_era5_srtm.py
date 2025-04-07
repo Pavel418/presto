@@ -20,12 +20,6 @@ try:
 except ImportError:
     TORCH_INSTALLED = False
 
-"""
-For easier normalization of the band values (instead of needing to recompute
-the normalization dict with the addition of new data), we provide maximum
-values for each band
-"""
-S1_DIV_VALUES = [25.0, 25.0]
 S2_BANDS = [
     "B1",
     "B2",
@@ -43,24 +37,11 @@ S2_BANDS = [
 ]
 S2_SHIFT_VALUES = [float(0.0)] * len(S2_BANDS)
 S2_DIV_VALUES = [float(1e4)] * len(S2_BANDS)
-# for temperature, shift to celcius and then divide by 35 based on notebook (ranges from)
-# 37 to -22 degrees celcius
-# For rainfall, based on
-# https://github.com/nasaharvest/lem/blob/main/notebooks/exploratory_data_analysis.ipynb
-ERA5_SHIFT_VALUES = [-272.15, 0.0]
-ERA5_DIV_VALUES = [35.0, 0.03]
-# visually gauged 90th percentile from
-# https://github.com/nasaharvest/lem/blob/main/notebooks/exploratory_data_analysis.ipynb
-SRTM_SHIFT_VALUES = [0.0, 0.0]
-SRTM_DIV_VALUES = [2000.0, 50.0]
 
 DYNAMIC_BANDS = S2_BANDS
 
-DYNAMIC_BANDS_SHIFT = S2_SHIFT_VALUES + ERA5_SHIFT_VALUES
-DYNAMIC_BANDS_DIV = S1_DIV_VALUES + S2_DIV_VALUES + ERA5_DIV_VALUES
-
-STATIC_BANDS_SHIFT = SRTM_SHIFT_VALUES
-STATIC_BANDS_DIV = SRTM_DIV_VALUES
+DYNAMIC_BANDS_SHIFT = S2_SHIFT_VALUES
+DYNAMIC_BANDS_DIV = S2_DIV_VALUES
 
 # These bands are what is created by the Engineer. If the engineer changes, the bands
 # here will need to change (and vice versa)
@@ -71,13 +52,9 @@ BANDS = [x for x in DYNAMIC_BANDS if x not in REMOVED_BANDS] + ["NDVI"]
 # NDVI is between 0 and 1
 ADD_BY = (
     [DYNAMIC_BANDS_SHIFT[i] for i, x in enumerate(DYNAMIC_BANDS) if x not in REMOVED_BANDS]
-    + STATIC_BANDS_SHIFT
-    + [0.0]
 )
 DIVIDE_BY = (
     [DYNAMIC_BANDS_DIV[i] for i, x in enumerate(DYNAMIC_BANDS) if x not in REMOVED_BANDS]
-    + STATIC_BANDS_DIV
-    + [1.0]
 )
 
 NUM_TIMESTEPS = 60
