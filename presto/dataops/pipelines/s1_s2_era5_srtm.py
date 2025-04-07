@@ -52,9 +52,11 @@ BANDS = [x for x in DYNAMIC_BANDS if x not in REMOVED_BANDS] + ["NDVI"]
 # NDVI is between 0 and 1
 ADD_BY = (
     [DYNAMIC_BANDS_SHIFT[i] for i, x in enumerate(DYNAMIC_BANDS) if x not in REMOVED_BANDS]
+    + [0.0]
 )
 DIVIDE_BY = (
     [DYNAMIC_BANDS_DIV[i] for i, x in enumerate(DYNAMIC_BANDS) if x not in REMOVED_BANDS]
+    + [1.0]
 )
 
 NUM_TIMESTEPS = 60
