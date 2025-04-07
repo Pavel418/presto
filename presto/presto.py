@@ -544,25 +544,38 @@ class Decoder(nn.Module):
 
         return x
 
-
     def reconstruct_inputs(self, x) -> Tuple[torch.Tensor]:
-        # split into channel groups
-        num_channel_groups = len(self.band_group_to_idx) - 1
-        num_timesteps = int((x.shape[1] - 1) / num_channel_groups)
+        print(f"[Decoder][Input] x.shape: {x.shape}")
+
+        # Split into channel groups
+        num_channel_groups = len(self.band_group_to_idx)
+        print(f"[Decoder] num_channel_groups: {num_channel_groups}")
+
+        num_timesteps = int(x.shape[1] / num_channel_groups)
+        print(f"[Decoder] num_timesteps: {num_timesteps}")
 
         mask = torch.full((x.shape[1],), True, device=x.device)
+        print(f"[Decoder] mask.shape: {mask.shape}, mask.sum(): {mask.sum().item()}")
+
         x = x[:, mask]
+        print(f"[Decoder] x.shape after applying mask: {x.shape}")
 
         x = x.view(x.shape[0], num_channel_groups, num_timesteps, x.shape[-1])
+        print(f"[Decoder] x.shape after view: {x.shape}")
 
         eo_output = []
         for group_name, idx in self.band_group_to_idx.items():
+            print(f"[Decoder] Processing group '{group_name}' at index {idx}")
             group_tokens = x[:, idx]
-            eo_output.append(self.eo_decoder_pred[group_name](group_tokens))
+            print(f"[Decoder] group_tokens.shape ({group_name}): {group_tokens.shape}")
+            decoded = self.eo_decoder_pred[group_name](group_tokens)
+            print(f"[Decoder] decoded.shape ({group_name}): {decoded.shape}")
+            eo_output.append(decoded)
 
-        # we can just do this concatenation because the BANDS_GROUP_IDX
-        # is ordered
-        return torch.cat(eo_output, dim=-1)
+        output = torch.cat(eo_output, dim=-1)
+        print(f"[Decoder][Output] Concatenated output shape: {output.shape}")
+
+        return output
 
     def forward(self, x, orig_indices, x_mask):
 
