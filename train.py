@@ -334,9 +334,7 @@ with tqdm(range(num_epochs), desc="Epoch") as tqdm_epoch:
         train_size = 0
         model.train()
         for epoch_step, b in enumerate(train_dataloader):
-            mask, x, y, start_month = b["mask"].to(device), b["x"].to(device), b["y"].to(device), b["start_month"]
-            dw_mask, x_dw, y_dw = b["mask_dw"].to(device), b["x_dw"].to(device).long(), b["y_dw"].to(device).long()
-            latlons = b["latlons"].to(device)
+            mask, x, y = b["mask"].to(device), b["x"].to(device), b["y"].to(device)
             # zero the parameter gradients
             optimizer.zero_grad()
             lr = adjust_learning_rate(
@@ -348,8 +346,8 @@ with tqdm(range(num_epochs), desc="Epoch") as tqdm_epoch:
                 min_learning_rate,
             )
             # Get model outputs and calculate loss
-            y_pred, dw_pred = model(
-                x, mask=mask, dynamic_world=x_dw, latlons=latlons, month=start_month
+            y_pred = model(
+                x, mask=mask
             )
             # set all SRTM timesteps except the first one to unmasked, so that
             # they will get ignored by the loss function even if the SRTM
@@ -357,15 +355,7 @@ with tqdm(range(num_epochs), desc="Epoch") as tqdm_epoch:
             mask[:, 1:, BANDS_GROUPS_IDX["SRTM"]] = False
             loss = mse(y_pred[mask], y[mask])
 
-            # Apply mask
-            masked_logits = dw_pred[dw_mask]
-            masked_labels = y_dw[dw_mask]
-
-            num_eo_masked, num_dw_masked = len(y_pred[mask]), len(dw_pred[dw_mask])
-            with torch.no_grad():
-                ratio = num_dw_masked / max(num_eo_masked, 1)
-                # weight shouldn't be > 1
-                weight = min(1, dynamic_world_loss_weight * ratio)
+            num_eo_masked = len(y_pred[mask])
 
             total_loss = loss
             total_loss.backward()
@@ -375,7 +365,6 @@ with tqdm(range(num_epochs), desc="Epoch") as tqdm_epoch:
             total_train_loss += total_loss.item()
             total_eo_train_loss += loss.item() * num_eo_masked
             total_num_eo_values_masked += num_eo_masked
-            total_num_dw_values_masked += num_dw_masked
             num_updates_being_captured += 1
             train_size += current_batch_size
             training_step += 1
@@ -384,9 +373,7 @@ with tqdm(range(num_epochs), desc="Epoch") as tqdm_epoch:
             if training_step % val_per_n_steps == 0:
                 total_val_loss = 0.0
                 total_eo_val_loss = 0.0
-                total_dw_val_loss = 0.0
                 total_val_num_eo_values_masked = 0
-                total_val_num_dw_values_masked = 0
                 num_val_updates_captured = 0
                 val_size = 0
                 model.eval()
@@ -396,31 +383,19 @@ with tqdm(range(num_epochs), desc="Epoch") as tqdm_epoch:
                             b["mask"].to(device),
                             b["x"].to(device),
                             b["y"].to(device),
-                            b["start_month"],
                         )
-                        dw_mask, x_dw = b["mask_dw"].to(device), b["x_dw"].to(device).long()
-                        y_dw, latlons = b["y_dw"].to(device).long(), b["latlons"].to(device)
                         # Get model outputs and calculate loss
-                        y_pred, dw_pred = model(
-                            x, mask=mask, dynamic_world=x_dw, latlons=latlons, month=start_month
+                        y_pred = model(
+                            x, mask=mask
                         )
-                        # set all SRTM timesteps except the first one to unmasked, so that
-                        # they will get ignored by the loss function even if the SRTM
-                        # value was masked
-                        mask[:, 1:, BANDS_GROUPS_IDX["SRTM"]] = False
                         loss = mse(y_pred[mask], y[mask])
-                        num_eo_masked, num_dw_masked = len(y_pred[mask]), len(dw_pred[dw_mask])
-                        with torch.no_grad():
-                            ratio = num_dw_masked / max(num_eo_masked, 1)
-                            # weight shouldn't be > 1
-                            weight = min(1, dynamic_world_loss_weight * ratio)
+                        num_eo_masked = len(y_pred[mask])
                         total_loss = loss
                         current_batch_size = len(x)
                         val_size += current_batch_size
                         total_val_loss += total_loss.item()
                         total_eo_val_loss += loss.item() * num_eo_masked
                         total_val_num_eo_values_masked += num_eo_masked
-                        total_val_num_dw_values_masked += num_dw_masked
                         num_val_updates_captured += 1
 
                 # ------------------------ Metrics + Logging -------------------------------
@@ -438,11 +413,9 @@ with tqdm(range(num_epochs), desc="Epoch") as tqdm_epoch:
                 # train_loss now reflects the value against which we calculate gradients
                 train_loss = total_train_loss / num_updates_being_captured
                 train_eo_loss = total_eo_train_loss / max(total_num_eo_values_masked, 1)
-                train_dw_loss = total_dw_train_loss / max(total_num_dw_values_masked, 1)
 
                 val_loss = total_val_loss / num_val_updates_captured
                 val_eo_loss = total_eo_val_loss / max(total_val_num_eo_values_masked, 1)
-                val_dw_loss = total_dw_val_loss / max(total_val_num_dw_values_masked, 1)
 
                 if "train_size" not in training_config and "val_size" not in training_config:
                     training_config["train_size"] = train_size
@@ -455,8 +428,6 @@ with tqdm(range(num_epochs), desc="Epoch") as tqdm_epoch:
                     "val_loss": val_loss,
                     "train_eo_loss": train_eo_loss,
                     "val_eo_loss": val_eo_loss,
-                    "train_dynamic_world_loss": train_dw_loss,
-                    "val_dynamic_world_loss": val_dw_loss,
                     "training_step": training_step,
                     "epoch": epoch,
                     "lr": lr,
@@ -477,9 +448,7 @@ with tqdm(range(num_epochs), desc="Epoch") as tqdm_epoch:
                 # reset training logging
                 total_train_loss = 0.0
                 total_eo_train_loss = 0.0
-                total_dw_train_loss = 0.0
                 total_num_eo_values_masked = 0
-                total_num_dw_values_masked = 0
                 num_updates_being_captured = 0
                 train_size = 0
                 num_validations += 1
