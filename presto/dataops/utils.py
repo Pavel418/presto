@@ -5,13 +5,10 @@ import torch
 from .pipelines.dynamicworld import DynamicWorld2020_2021
 from .pipelines.s1_s2_era5_srtm import (
     BANDS,
-    ERA5_BANDS,
     NORMED_BANDS,
     REMOVED_BANDS,
-    S1_BANDS,
     S1_S2_ERA5_SRTM,
     S2_BANDS,
-    SRTM_BANDS,
 )
 
 
