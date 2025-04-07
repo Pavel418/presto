@@ -311,7 +311,8 @@ class Encoder(nn.Module):
             (torch.zeros(x.shape[0])[:, None].to(device).int(), orig_indices + 1),
             dim=1,
         )
-
+        print(f"x shape: {x.shape}")
+        print(f"upd_mask shape: {upd_mask.shape}")
         # apply Transformer blocks
         for blk in self.blocks:
             x = blk(x, attn_mask=~upd_mask.bool())
