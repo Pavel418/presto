@@ -418,14 +418,16 @@ class Decoder(nn.Module):
         return out
 
     def add_embeddings(self, x):
-        num_channel_groups = len(self.band_group_to_idx)
-        # -2 since we remove srtm and latlon, and -1 since the srtm
-        # channel group doesn't have timesteps
-        num_timesteps = int((x.shape[1] - 2) / (num_channel_groups - 1))
+        print(f"[Input] x.shape: {x.shape}")
 
-        # when we expand the encodings, each channel_group gets num_timesteps
-        # encodings.
+        num_channel_groups = len(self.band_group_to_idx)
+        print(f"[Info] num_channel_groups: {num_channel_groups}")
+
+        num_timesteps = int((x.shape[1] - 2) / (num_channel_groups - 1))
+        print(f"[Info] num_timesteps: {num_timesteps}")
+
         remove_mask = torch.full(size=(num_timesteps * num_channel_groups,), fill_value=False)
+        print(f"[remove_mask] shape: {remove_mask.shape}")
 
         positional_embedding = repeat(
             self.pos_embed[:, :num_timesteps, :],
@@ -433,25 +435,40 @@ class Decoder(nn.Module):
             b2=x.shape[0],
             t2=num_channel_groups,
         )
+        print(f"[positional_embedding after repeat] shape: {positional_embedding.shape}")
+
         positional_embedding = positional_embedding[:, ~remove_mask]
+        print(f"[positional_embedding after masking] shape: {positional_embedding.shape}")
 
         channel_embeddings = torch.repeat_interleave(
             self.channel_embeddings.weight, repeats=num_timesteps, dim=0
         )
+        print(f"[channel_embeddings after repeat_interleave] shape: {channel_embeddings.shape}")
+
         channel_embeddings = repeat(channel_embeddings, "c d -> b c d", b=x.shape[0])
+        print(f"[channel_embeddings after repeat] shape: {channel_embeddings.shape}")
+
         channel_embeddings = channel_embeddings[:, ~remove_mask]
+        print(f"[channel_embeddings after masking] shape: {channel_embeddings.shape}")
 
         positional_embedding = torch.cat(
             (channel_embeddings, positional_embedding), dim=-1
         )
+        print(f"[positional_embedding after concat with channel_embeddings] shape: {positional_embedding.shape}")
 
-        # add the zero embedding for the latlon token
+        zero_embedding = torch.zeros_like(positional_embedding[:, 0:1, :])
+        print(f"[zero_embedding] shape: {zero_embedding.shape}")
+
         positional_embedding = torch.cat(
-            [torch.zeros_like(positional_embedding[:, 0:1, :]), positional_embedding], dim=1
+            [zero_embedding, positional_embedding], dim=1
         )
+        print(f"[positional_embedding after adding zero token] shape: {positional_embedding.shape}")
 
         x += positional_embedding
+        print(f"[Output] x.shape after adding positional_embedding: {x.shape}")
+
         return x
+
 
     def reconstruct_inputs(self, x) -> Tuple[torch.Tensor]:
         # split into channel groups
