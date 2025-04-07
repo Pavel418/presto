@@ -348,12 +348,10 @@ class Encoder(nn.Module):
         print(f"[Encoder] orig_indices shape: {orig_indices.shape} [batch, num_masked_tokens]")
         print(f"[Encoder] upd_mask shape: {upd_mask.shape} [batch, total_timesteps] (1=masked)")
 
-        # Adjust indices to account for [CLS] token (prepended zero)
-        orig_indices = torch.cat(
-            (torch.zeros(x.shape[0])[:, None].to(device).int(), orig_indices + 1),
-            dim=1,
-        )
-        print(f"[Encoder] orig_indices shape after CLS adjustment: {orig_indices.shape} [batch, num_masked+1]")
+        # orig_indices = torch.cat(
+        #     (torch.zeros(x.shape[0])[:, None].to(device).int(), orig_indices + 1),
+        #     dim=1,
+        # )
 
         # Pass through transformer blocks
         print(f"\n[Encoder] x shape before transformer blocks: {x.shape}")
