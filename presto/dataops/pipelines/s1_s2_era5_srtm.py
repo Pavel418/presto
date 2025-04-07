@@ -70,7 +70,7 @@ STATIC_BANDS_DIV = SRTM_DIV_VALUES
 
 # These bands are what is created by the Engineer. If the engineer changes, the bands
 # here will need to change (and vice versa)
-REMOVED_BANDS = ["B1", "B10"]
+REMOVED_BANDS = ["B10"]
 RAW_BANDS = DYNAMIC_BANDS + STATIC_BANDS
 
 BANDS = [x for x in DYNAMIC_BANDS if x not in REMOVED_BANDS] + STATIC_BANDS + ["NDVI"]
@@ -90,19 +90,18 @@ NUM_TIMESTEPS = 60
 NUM_ORG_BANDS = len(BANDS)
 TIMESTEPS_IDX = list(range(NUM_TIMESTEPS))
 
-NORMED_BANDS = [x for x in BANDS if x != "B9"]
+NORMED_BANDS = [x for x in BANDS]
 NUM_BANDS = len(NORMED_BANDS)
 BANDS_IDX = list(range(NUM_BANDS))
 BANDS_GROUPS_IDX: OrderedDictType[str, List[int]] = OrderedDict(
     {
-        "S1": [NORMED_BANDS.index(b) for b in S1_BANDS],
+        "S2_B1": [NORMED_BANDS.index(b) for b in ["B1"]],
         "S2_RGB": [NORMED_BANDS.index(b) for b in ["B2", "B3", "B4"]],
         "S2_Red_Edge": [NORMED_BANDS.index(b) for b in ["B5", "B6", "B7"]],
         "S2_NIR_10m": [NORMED_BANDS.index(b) for b in ["B8"]],
         "S2_NIR_20m": [NORMED_BANDS.index(b) for b in ["B8A"]],
-        "S2_SWIR": [NORMED_BANDS.index(b) for b in ["B11", "B12"]],  # Include B10?
-        "ERA5": [NORMED_BANDS.index(b) for b in ERA5_BANDS],
-        "SRTM": [NORMED_BANDS.index(b) for b in SRTM_BANDS],
+        "S2_NIR_60m": [NORMED_BANDS.index(b) for b in ["B9"]],
+        "S2_SWIR": [NORMED_BANDS.index(b) for b in ["B11", "B12"]],
         "NDVI": [NORMED_BANDS.index("NDVI")],
     }
 )

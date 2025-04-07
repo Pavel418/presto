@@ -218,7 +218,7 @@ train_dataset = FranceCropsFullDataset(
 )
 val_dataset = FranceCropsFullDataset(
     dataset="saget-antoine/francecrops",
-    split="val",
+    split="validation",
     mask_params=mask_params,
     shuffle=False,
     seed=42,

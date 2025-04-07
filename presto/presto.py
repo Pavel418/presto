@@ -9,7 +9,6 @@ from torch import nn
 from torch.jit import Final
 from torch.nn import functional as F
 
-from .dataops.pipelines.dynamicworld import DynamicWorld2020_2021
 from .dataops.pipelines.s1_s2_era5_srtm import BANDS_GROUPS_IDX
 from .model import FinetuningHead, FineTuningModel, Seq2Seq
 from .utils import default_model_path, device
@@ -179,48 +178,11 @@ def get_sinusoid_encoding_table(positions, d_hid, T=1000):
     return torch.FloatTensor(sinusoid_table).to(device)
 
 
-def get_month_encoding_table(d_hid):
-    """Sinusoid month encoding table, for 12 months indexed from 0-11"""
-    assert d_hid % 2 == 0
-    angles = np.arange(0, 13) / (12 / (2 * np.pi))
-
-    sin_table = np.sin(np.stack([angles for _ in range(d_hid // 2)], axis=-1))
-    cos_table = np.cos(np.stack([angles for _ in range(d_hid // 2)], axis=-1))
-    month_table = np.concatenate([sin_table[:-1], cos_table[:-1]], axis=-1)
-
-    if torch.cuda.is_available():
-        return torch.FloatTensor(month_table).cuda()
-    else:
-        return torch.FloatTensor(month_table)
-
-
-def month_to_tensor(month: Union[torch.Tensor, int], batch_size: int, seq_len: int):
-    if isinstance(month, int):
-        assert cast(int, month) < 12
-    else:
-        assert max(cast(torch.Tensor, month.flatten())) < 12
-
-    if isinstance(month, int):
-        # >>> torch.fmod(torch.tensor([9., 10, 11, 12, 13, 14]), 12)
-        # tensor([ 9., 10., 11.,  0.,  1.,  2.])
-        month = (
-            torch.fmod(torch.arange(month, month + seq_len, dtype=torch.long), 12)
-            .expand(batch_size, seq_len)
-            .to(device)
-        )
-    elif len(month.shape) == 1:
-        month = torch.stack(
-            [torch.fmod(torch.arange(m, m + seq_len, dtype=torch.long), 12) for m in month]
-        ).to(device)
-    return month
-
-
 class Encoder(nn.Module):
     def __init__(
         self,
         embedding_size: int = 128,
         channel_embed_ratio: float = 0.25,
-        month_embed_ratio: float = 0.25,
         depth=2,
         mlp_ratio=2,
         num_heads=8,
@@ -235,7 +197,6 @@ class Encoder(nn.Module):
         self.band_group_to_idx = {
             group_name: idx for idx, (group_name, _) in enumerate(self.band_groups.items())
         }
-        self.band_group_to_idx["dynamic_world"] = max(self.band_group_to_idx.values()) + 1
 
         self.eo_patch_embed = nn.ModuleDict(
             {
@@ -243,11 +204,6 @@ class Encoder(nn.Module):
                 for group_name, group in self.band_groups.items()
             }
         )
-        self.dw_embed = nn.Embedding(
-            num_embeddings=DynamicWorld2020_2021.class_amount + 1, embedding_dim=embedding_size
-        )
-        self.latlon_embed = nn.Linear(3, embedding_size)
-
         self.blocks = nn.ModuleList(
             [
                 Block(
@@ -264,14 +220,11 @@ class Encoder(nn.Module):
 
         # the positional + monthly + channel embedding
         self.max_sequence_length = max_sequence_length
-        pos_embedding_size = int(embedding_size * (1 - (channel_embed_ratio + month_embed_ratio)))
+        pos_embedding_size = int(embedding_size * (1 - channel_embed_ratio))
         channel_embedding_size = int(embedding_size * channel_embed_ratio)
-        month_embedding_size = int(embedding_size * month_embed_ratio)
         self.pos_embed = nn.Parameter(
             torch.zeros(1, max_sequence_length, pos_embedding_size), requires_grad=False
         )
-        month_tab = get_month_encoding_table(month_embedding_size)
-        self.month_embed = nn.Embedding.from_pretrained(month_tab, freeze=True)
         self.channel_embed = nn.Embedding(
             num_embeddings=len(self.band_groups) + 1, embedding_dim=channel_embedding_size
         )
@@ -297,18 +250,6 @@ class Encoder(nn.Module):
             nn.init.constant_(m.weight, 1.0)
 
     @staticmethod
-    def cartesian(latlons: torch.Tensor) -> torch.Tensor:
-        with torch.no_grad():
-            # an embedding is calculated for all timesteps. This is then expanded
-            # for each timestep in the sequence
-            latlon_radians = latlons * math.pi / 180
-            lats, lons = latlon_radians[:, 0], latlon_radians[:, 1]
-            x = torch.cos(lats) * torch.cos(lons)
-            y = torch.cos(lats) * torch.sin(lons)
-            z = torch.sin(lats)
-        return torch.stack([x, y, z], dim=-1)
-
-    @staticmethod
     def mask_tokens(x, mask):
         mask = mask.bool()
         # https://stackoverflow.com/a/68621610/2332296
@@ -328,18 +269,13 @@ class Encoder(nn.Module):
     def forward(
         self,
         x: torch.Tensor,
-        dynamic_world: torch.Tensor,
-        latlons: torch.Tensor,
         mask: Optional[torch.Tensor] = None,
-        month: Union[torch.Tensor, int] = 0,
         eval_task: bool = True,
     ):
 
         if mask is None:
             mask = torch.zeros_like(x, device=x.device).float()
 
-        months = month_to_tensor(month, x.shape[0], x.shape[1])
-        month_embedding = self.month_embed(months)
         positional_embedding = repeat(
             self.pos_embed[:, : x.shape[1], :], "b t d -> (repeat b) t d", repeat=x.shape[0]
         )
@@ -354,23 +290,11 @@ class Encoder(nn.Module):
                 torch.tensor(self.band_group_to_idx[channel_group]).long().to(device)
             )
             channel_embedding = repeat(channel_embedding, "d -> b t d", b=x.shape[0], t=x.shape[1])
-            if channel_group == "SRTM":
-                # for SRTM, we reduce it to a single token instead of
-                # a token per timestep
-                channel_wise_positional_embedding = torch.cat(
-                    (
-                        torch.zeros_like(month_embedding[:, 0:1]),
-                        channel_embedding[:, 0:1],
-                        torch.zeros_like(positional_embedding[:, 0:1]),
-                    ),
-                    dim=-1,
-                )
-                indices = slice(0, 1)
-            else:
-                channel_wise_positional_embedding = torch.cat(
-                    (month_embedding, channel_embedding, positional_embedding), dim=-1
-                )
-                indices = slice(None)
+            
+            channel_wise_positional_embedding = torch.cat(
+                (channel_embedding, positional_embedding), dim=-1
+            )
+            indices = slice(None)
 
             tokens = tokens[:, indices]
             tokens += channel_wise_positional_embedding
@@ -378,29 +302,17 @@ class Encoder(nn.Module):
             group_mask = torch.max(mask[:, indices, channel_idxs], dim=-1)[0]
             all_masks.append(group_mask)
 
-        # then, dynamic world
-        tokens = self.dw_embed(dynamic_world)
-        channel_embedding = self.channel_embed(
-            torch.tensor(self.band_group_to_idx["dynamic_world"]).long().to(device)
-        )
         channel_embedding = repeat(channel_embedding, "d -> b t d", b=x.shape[0], t=x.shape[1])
         positional_embedding = torch.cat(
-            (month_embedding, channel_embedding, positional_embedding), dim=-1
+            (channel_embedding, positional_embedding), dim=-1
         )
         tokens += positional_embedding
         all_tokens.append(tokens)
-
-        # now we calculate the mask for these [b, t] tokens
-        group_mask = dynamic_world == DynamicWorld2020_2021.class_amount
-        all_masks.append(group_mask)
 
         x = torch.cat(all_tokens, dim=1)  # [batch, timesteps, embedding_dim]
         mask = torch.cat(all_masks, dim=1)  # [batch, timesteps]
         x, orig_indices, upd_mask = self.mask_tokens(x, mask)
 
-        # append latlon tokens
-        latlon_tokens = self.latlon_embed(self.cartesian(latlons)).unsqueeze(1)
-        x = torch.cat((latlon_tokens, x), dim=1)
         upd_mask = torch.cat((torch.zeros(x.shape[0])[:, None].to(device), upd_mask), dim=1)
         orig_indices = torch.cat(
             (torch.zeros(x.shape[0])[:, None].to(device).int(), orig_indices + 1),
@@ -441,7 +353,6 @@ class Decoder(nn.Module):
         self.band_group_to_idx = {
             group_name: idx for idx, (group_name, _) in enumerate(self.band_groups.items())
         }
-        self.band_group_to_idx["dynamic_world"] = max(self.band_group_to_idx.values()) + 1
 
         self.decoder_embed = nn.Linear(encoder_embed_dim, decoder_embed_dim, bias=True)
 
@@ -468,19 +379,15 @@ class Decoder(nn.Module):
                 for group_name, group in self.band_groups.items()
             }
         )
-        self.dw_decoder_pred = nn.Linear(decoder_embed_dim, DynamicWorld2020_2021.class_amount)
-
         self.channel_embeddings = channel_embeddings
         channel_embedding_dims = channel_embeddings.weight.shape[-1]
         remaining_embeddings = decoder_embed_dim - channel_embedding_dims
-        # the positional + monthly + channel embedding
+        # the positional + channel embedding
         self.max_sequence_length = max_sequence_length
         self.pos_embed = nn.Parameter(
             torch.zeros(1, max_sequence_length, int(remaining_embeddings) // 2),
             requires_grad=False,
         )
-        month_tab = get_month_encoding_table(int(remaining_embeddings) // 2)
-        self.month_embed = nn.Embedding.from_pretrained(month_tab, freeze=True)
 
         self.initialize_weights()
 
@@ -519,25 +426,15 @@ class Decoder(nn.Module):
         out = out.scatter(1, orig_indices[:, :, None].expand_as(out), out)
         return out
 
-    def add_embeddings(self, x, month: Union[torch.Tensor, int]):
+    def add_embeddings(self, x):
         num_channel_groups = len(self.band_group_to_idx)
         # -2 since we remove srtm and latlon, and -1 since the srtm
         # channel group doesn't have timesteps
         num_timesteps = int((x.shape[1] - 2) / (num_channel_groups - 1))
-        srtm_index = self.band_group_to_idx["SRTM"] * num_timesteps
-        months = month_to_tensor(month, x.shape[0], num_timesteps)
 
         # when we expand the encodings, each channel_group gets num_timesteps
-        # encodings. However, there is only one SRTM token so we remove the
-        # excess SRTM encodings
+        # encodings.
         remove_mask = torch.full(size=(num_timesteps * num_channel_groups,), fill_value=False)
-        remove_mask[torch.arange(num_timesteps - 1) + srtm_index] = True
-
-        month_embedding = repeat(
-            self.month_embed(months), "b t d -> b (repeat t) d", repeat=num_channel_groups
-        )
-        month_embedding = month_embedding[:, ~remove_mask]
-        month_embedding[:, srtm_index] = 0
 
         positional_embedding = repeat(
             self.pos_embed[:, :num_timesteps, :],
@@ -546,7 +443,6 @@ class Decoder(nn.Module):
             t2=num_channel_groups,
         )
         positional_embedding = positional_embedding[:, ~remove_mask]
-        positional_embedding[:, srtm_index] = 0
 
         channel_embeddings = torch.repeat_interleave(
             self.channel_embeddings.weight, repeats=num_timesteps, dim=0
@@ -555,7 +451,7 @@ class Decoder(nn.Module):
         channel_embeddings = channel_embeddings[:, ~remove_mask]
 
         positional_embedding = torch.cat(
-            (month_embedding, channel_embeddings, positional_embedding), dim=-1
+            (channel_embeddings, positional_embedding), dim=-1
         )
 
         # add the zero embedding for the latlon token
@@ -566,50 +462,30 @@ class Decoder(nn.Module):
         x += positional_embedding
         return x
 
-    def reconstruct_inputs(self, x) -> Tuple[torch.Tensor, torch.Tensor]:
-        # remove the latlon token
-        x = x[:, 1:, :]
-
+    def reconstruct_inputs(self, x) -> Tuple[torch.Tensor]:
         # split into channel groups
         num_channel_groups = len(self.band_group_to_idx) - 1
         num_timesteps = int((x.shape[1] - 1) / num_channel_groups)
-        srtm_index = self.band_group_to_idx["SRTM"] * num_timesteps
-        srtm_token = x[:, srtm_index : srtm_index + 1, :]
 
         mask = torch.full((x.shape[1],), True, device=x.device)
-        mask[torch.tensor(srtm_index)] = False
         x = x[:, mask]
 
         x = x.view(x.shape[0], num_channel_groups, num_timesteps, x.shape[-1])
 
-        eo_output, dw_output = [], None
+        eo_output = []
         for group_name, idx in self.band_group_to_idx.items():
-            if group_name == "SRTM":
-                eo_output.append(
-                    repeat(
-                        self.eo_decoder_pred[group_name](srtm_token),
-                        "b t d -> b (t2 t) d",
-                        t2=num_timesteps,
-                    )
-                )
-            else:
-                if idx > self.band_group_to_idx["SRTM"]:
-                    idx -= 1
-                group_tokens = x[:, idx]
-                if group_name == "dynamic_world":
-                    dw_output = self.dw_decoder_pred(group_tokens)
-                else:
-                    eo_output.append(self.eo_decoder_pred[group_name](group_tokens))
+            group_tokens = x[:, idx]
+            eo_output.append(self.eo_decoder_pred[group_name](group_tokens))
 
         # we can just do this concatenation because the BANDS_GROUP_IDX
         # is ordered
-        return torch.cat(eo_output, dim=-1), cast(torch.Tensor, dw_output)
+        return torch.cat(eo_output, dim=-1)
 
-    def forward(self, x, orig_indices, x_mask, month):
+    def forward(self, x, orig_indices, x_mask):
 
         x = self.decoder_embed(x)
         x = self.add_masked_tokens(x, orig_indices, x_mask)
-        x = self.add_embeddings(x, month)
+        x = self.add_embeddings(x)
 
         # apply Transformer blocks
         for blk in self.decoder_blocks:
@@ -628,25 +504,18 @@ class PrestoFineTuningModel(FineTuningModel):
         # but don't unfreeze the position encoder, which
         # shouldn't be trainable
         self.encoder.pos_embed.requires_grad_(False)
-        self.encoder.month_embed.requires_grad_(False)
         self.head = head
 
     def forward(
         self,
         x: torch.Tensor,
-        dynamic_world: torch.Tensor,
-        latlons: torch.Tensor,
         mask: Optional[torch.Tensor] = None,
-        month: Union[torch.Tensor, int] = 0,
     ) -> torch.Tensor:
 
         return self.head(
             self.encoder(
                 x=x,
-                dynamic_world=dynamic_world,
-                latlons=latlons,
                 mask=mask,
-                month=month,
                 eval_task=True,
             )
         )
@@ -668,7 +537,6 @@ class PrestoFinetuningWithAggregates(FineTuningModel):
         # but don't unfreeze the position encoder, which
         # shouldn't be trainable
         self.encoder.pos_embed.requires_grad_(False)
-        self.encoder.month_embed.requires_grad_(False)
 
         aggregate_to_multiplier = {"mean": 2, "quantiles": 5}
         if aggregate not in aggregate_to_multiplier.keys():
@@ -711,10 +579,7 @@ class PrestoFinetuningWithAggregates(FineTuningModel):
     def forward(
         self,
         x: torch.Tensor,
-        dynamic_world: torch.Tensor,
-        latlons: torch.Tensor,
         mask: Optional[torch.Tensor] = None,
-        month: Union[torch.Tensor, int] = 0,
     ) -> torch.Tensor:
 
         # inputs are expected to be with 2 batch dimensions
@@ -726,10 +591,6 @@ class PrestoFinetuningWithAggregates(FineTuningModel):
             # masking is created by the _mask_to_batch_tensor, which
             # doesn't know about this extra dimension
             mask=repeat(mask, "b t d -> (repeat b) t d", repeat=outputs_per_image),
-            dynamic_world=rearrange(dynamic_world, "b bp t -> (b bp) t"),
-            latlons=rearrange(latlons, "b bp d -> (b bp) d"),
-            # ... for an optional timestep dimension
-            month=rearrange(month, "b bp ... -> (b bp) ..."),
         )
         encodings = self.reshape_for_aggregate(encodings, self.aggregate, outputs_per_image)
         return self.head(encodings)
@@ -744,28 +605,21 @@ class Presto(Seq2Seq):
     def forward(
         self,
         x: torch.Tensor,
-        dynamic_world: torch.Tensor,
-        latlons: torch.Tensor,
         mask: Optional[torch.Tensor] = None,
-        month: Union[torch.Tensor, int] = 0,
     ) -> torch.Tensor:
         x, orig_indices, x_mask = self.encoder(
             x=x,
-            dynamic_world=dynamic_world,
-            latlons=latlons,
             mask=mask,
-            month=month,
             eval_task=False,
         )
 
-        return self.decoder(x, orig_indices, x_mask, month)
+        return self.decoder(x, orig_indices, x_mask)
 
     @classmethod
     def construct(
         cls,
         encoder_embedding_size: int = 128,
         channel_embed_ratio: float = 0.25,
-        month_embed_ratio: float = 0.25,
         encoder_depth=2,
         mlp_ratio=4,
         encoder_num_heads=8,
@@ -777,7 +631,6 @@ class Presto(Seq2Seq):
         encoder = Encoder(
             embedding_size=encoder_embedding_size,
             channel_embed_ratio=channel_embed_ratio,
-            month_embed_ratio=month_embed_ratio,
             depth=encoder_depth,
             mlp_ratio=mlp_ratio,
             num_heads=encoder_num_heads,
