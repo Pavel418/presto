@@ -115,7 +115,7 @@ class MaskParams:
                 "random_combinations",
             ]
 
-    def mask_data(self, eo_data: np.ndarray, dw_data: np.ndarray):
+    def mask_data(self, eo_data: np.ndarray):
         strategy = choice(self.strategies)
         mask = make_mask(strategy=strategy, mask_ratio=self.ratio)
         x = eo_data * ~mask
