@@ -239,13 +239,6 @@ if dataloader_length == -1:
         dataloader_length += 1
     logger.info("train_dataloader length: ", dataloader_length)
 
-
-if cropharvest_per_n_validations != 0:
-    cropharvest_validation = CropHarvestMultiClassValidation(
-        n_per_class=cropharvest_val_n_per_class if cropharvest_val_n_per_class != -1 else None
-    )
-
-
 # ------------ Model -----------------------------------------
 logger.info("Setting up model")
 model = Presto.construct(**model_kwargs)
@@ -268,54 +261,6 @@ training_config = {
     **args,
     **model_kwargs,
 }
-
-if wandb_enabled:
-    wandb.config.update(training_config)
-
-    examples = []
-
-    # Dynamic world masking is not visualizable in this setting
-    for ex in train_dataset:
-        examples.append(ex)
-        if len(examples) >= wandb_plots:
-            break
-    for ex in val_dataset:
-        examples.append(ex)
-        if len(examples) >= wandb_plots * 2:
-            break
-
-    def to_tensor(ex):
-        return torch.from_numpy(ex).to(device)
-
-    masks_tensor = torch.stack([to_tensor(ex.mask_eo) for ex in examples])
-    xs_tensor = torch.stack([to_tensor(ex.x_eo) for ex in examples])
-    x_dws_tensor = torch.stack([to_tensor(ex.x_dw).long() for ex in examples])
-    start_months_tensor = torch.stack([torch.tensor(ex.start_month).to(device) for ex in examples])
-    latlons_tensor = torch.stack([to_tensor(ex.latlon) for ex in examples])
-
-    def plot_predictions(model):
-        with torch.no_grad():
-            eo_preds, dw_preds = model(
-                xs_tensor,
-                mask=masks_tensor,
-                dynamic_world=x_dws_tensor,
-                latlons=latlons_tensor,
-                month=start_months_tensor,
-            )
-        name_plots_list = []
-        for i, example in enumerate(examples):
-            if i < wandb_plots:
-                title = f"plot_train_{i}_{example.strategy}"
-            else:
-                title = f"plot_val_{i}_{example.strategy}"
-            fig = plot_masked(
-                example=example,
-                eo_pred=eo_preds[i].cpu().numpy(),
-                dw_pred=dw_preds[i].cpu().numpy(),
-            )
-            name_plots_list.append((title, wandb.Image(fig)))
-        return name_plots_list
-
 
 lowest_validation_loss = None
 best_val_epoch = 0
@@ -344,17 +289,11 @@ with tqdm(range(num_epochs), desc="Epoch") as tqdm_epoch:
                 min_learning_rate,
             )
 
-            print("[Metric] mask.shape:", mask.shape)
-            print("[Metric] x.shape:", x.shape)
-
             # Get model outputs and calculate loss
             y_pred = model(
                 x, mask=mask
             )
 
-            print("[Metric] y_pred.shape:", y_pred.shape)
-            print("[Metric] y.shape:", y.shape)
-            print("[Metric] mask.shape:", mask.shape)
             loss = mse(y_pred[mask], y[mask])
 
             num_eo_masked = len(y_pred[mask])
@@ -381,7 +320,7 @@ with tqdm(range(num_epochs), desc="Epoch") as tqdm_epoch:
                 model.eval()
                 with torch.no_grad():
                     for b in tqdm(val_dataloader, desc="Validate"):
-                        mask, x, y, start_month = (
+                        mask, x, y = (
                             b["mask"].to(device),
                             b["x"].to(device),
                             b["y"].to(device),
@@ -401,17 +340,6 @@ with tqdm(range(num_epochs), desc="Epoch") as tqdm_epoch:
                         num_val_updates_captured += 1
 
                 # ------------------------ Metrics + Logging -------------------------------
-                if (
-                    (cropharvest_per_n_validations != 0)
-                    and (num_validations % cropharvest_per_n_validations == 0)
-                    and wandb_enabled
-                ):
-                    results = cropharvest_validation.finetuning_results(
-                        model, model_modes=["Regression", "Random Forest"]
-                    )
-                    results["epoch"] = epoch
-                    wandb.log(results)
-
                 # train_loss now reflects the value against which we calculate gradients
                 train_loss = total_train_loss / num_updates_being_captured
                 train_eo_loss = total_eo_train_loss / max(total_num_eo_values_masked, 1)
@@ -422,8 +350,6 @@ with tqdm(range(num_epochs), desc="Epoch") as tqdm_epoch:
                 if "train_size" not in training_config and "val_size" not in training_config:
                     training_config["train_size"] = train_size
                     training_config["val_size"] = val_size
-                    if wandb_enabled:
-                        wandb.config.update(training_config)
 
                 to_log = {
                     "train_loss": train_loss,
@@ -454,13 +380,6 @@ with tqdm(range(num_epochs), desc="Epoch") as tqdm_epoch:
                 num_updates_being_captured = 0
                 train_size = 0
                 num_validations += 1
-
-                if wandb_enabled:
-                    model.eval()
-                    for title, plot in plot_predictions(model):
-                        to_log[title] = plot
-                    wandb.log(to_log)
-                    plt.close("all")
 
                 model.train()
 
