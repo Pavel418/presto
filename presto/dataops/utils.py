@@ -103,8 +103,8 @@ def construct_single_presto_input(
             x = (x + torch.tensor(ADD_BY)) / torch.tensor(DIVIDE_BY)
         if ndvi:        
             if len(x.shape) == 2:
-                x[:, len(s2_bands)] = calculate_ndvi(x)
+                x[:, len(s2_bands)] = calculate_ndvi(x, s2_bands)
             else:
-                x[:, :, len(s2_bands)] = calculate_ndvi(x)
+                x[:, :, len(s2_bands)] = calculate_ndvi(x, s2_bands)
             mask[:, len(s2_bands)] = 0
     return x, mask
