@@ -638,7 +638,7 @@ class FranceCropsFullDataset(TorchDataset):
         if self.shuffle:
             expanded_dataset = expanded_dataset.shuffle(seed=self.seed)
         # Convert to Presto format
-        processed_dataset = sampled_dataset.map(self._convert_to_presto)
+        processed_dataset = expanded_dataset.map(self._convert_to_presto)
         return processed_dataset
 
     def __len__(self) -> int:
