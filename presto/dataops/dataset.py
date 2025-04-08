@@ -637,7 +637,11 @@ class FranceCropsFullDataset(TorchDataset):
         """Convert examples to Presto input format."""
         x_tensor = torch.tensor(examples['x'], dtype=torch.float32)
         bands = ["B1", "B2", "B3", "B4", "B5", "B6", "B7", "B8", "B8A", "B9", "B11", "B12"]
+        print(f"[DATASET] x_tensor shape: {x_tensor.shape}")
+        print(f"[DATASET] bands: {bands}")
         presto_input, mask = construct_single_presto_input(s2=x_tensor, s2_bands=bands)
+        print(f"[DATASET] Presto input shape: {presto_input.shape}")
+        print(f"[DATASET] Mask shape: {mask.shape}")
 
         mask, x, y, strat = self.mask_params.mask_data(presto_input)
 
