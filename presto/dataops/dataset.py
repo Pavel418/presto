@@ -639,6 +639,7 @@ class FranceCropsFullDataset(TorchDataset):
         if self.shuffle:
             expanded_dataset = expanded_dataset.shuffle(seed=self.seed)
         # Convert to Presto format
+        expanded_dataset = expanded_dataset[:10]
         processed_dataset = expanded_dataset.map(self._convert_to_presto)
         print(f"[DATASET] dataset entry shape: {processed_dataset[0]['x'].shape}")
         return processed_dataset
