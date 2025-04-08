@@ -349,6 +349,10 @@ with tqdm(range(num_epochs), desc="Epoch") as tqdm_epoch:
             y_pred = model(
                 x, mask=mask
             )
+
+            print("[Metric] y_pred.shape:", y_pred.shape)
+            print("[Metric] y.shape:", y.shape)
+            print("[Metric] mask.shape:", mask.shape)
             loss = mse(y_pred[mask], y[mask])
 
             num_eo_masked = len(y_pred[mask])
