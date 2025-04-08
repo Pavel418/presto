@@ -327,9 +327,7 @@ with tqdm(range(num_epochs), desc="Epoch") as tqdm_epoch:
         # ------------------------ Training ----------------------------------------
         total_train_loss = 0.0
         total_eo_train_loss = 0.0
-        total_dw_train_loss = 0.0
         total_num_eo_values_masked = 0
-        total_num_dw_values_masked = 0
         num_updates_being_captured = 0
         train_size = 0
         model.train()
