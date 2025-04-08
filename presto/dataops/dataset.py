@@ -517,7 +517,7 @@ class FranceCropsFullDataset(TorchDataset):
             raise ValueError(f"Metadata not found in {cache_dir}")
         
         with open(metadata_path, 'r') as f:
-            saved_metadata = json.load(f)
+            saved_metadata = f.read()  # Read as raw string
         
         current_metadata = self._get_metadata()
         if saved_metadata != current_metadata:
@@ -525,6 +525,7 @@ class FranceCropsFullDataset(TorchDataset):
                 f"Cache mismatch. Delete or use different cache directory.\n"
                 f"Saved: {saved_metadata}\nCurrent: {current_metadata}"
             )
+
 
     def _get_metadata(self) -> dict:
         """Generate parameter signature with serializable data types"""
@@ -539,7 +540,7 @@ class FranceCropsFullDataset(TorchDataset):
             'stratify_by': 'y',
             'split_method': 'stratified'
         }
-        return json.dumps(metadata, sort_keys=True)
+        return json.dumps(metadata)
 
     def _save_cache(self, cache_dir: str):
         """Persist processed dataset with metadata"""
@@ -549,7 +550,7 @@ class FranceCropsFullDataset(TorchDataset):
         
         metadata_path = os.path.join(cache_dir, 'metadata.json')
         with open(metadata_path, 'w') as f:
-            json.dump(self._get_metadata(), f, indent=4, default=str)
+            f.write(self._get_metadata())
 
     def _load_and_split(self, dataset: str) -> datasets.Dataset:
         """Handle stratified three-way split from original dataset"""
