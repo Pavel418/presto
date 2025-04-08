@@ -345,6 +345,10 @@ with tqdm(range(num_epochs), desc="Epoch") as tqdm_epoch:
                 max_learning_rate,
                 min_learning_rate,
             )
+
+            print("[Metric] mask.shape:", mask.shape)
+            print("[Metric] x.shape:", x.shape)
+
             # Get model outputs and calculate loss
             y_pred = model(
                 x, mask=mask
