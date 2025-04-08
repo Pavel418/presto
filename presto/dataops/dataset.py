@@ -1,3 +1,4 @@
+import ast
 import json
 import logging
 import os
@@ -482,9 +483,7 @@ def convert_to_serializable(obj):
         return obj.tolist()
     elif isinstance(obj, dict):
         return {k: convert_to_serializable(v) for k, v in obj.items()}
-    elif isinstance(obj, list):
-        return [convert_to_serializable(v) for v in obj]
-    elif isinstance(obj, tuple):  # Handle tuples by converting to lists
+    elif isinstance(obj, (list, tuple)):  # Handle both lists and tuples
         return [convert_to_serializable(v) for v in obj]
     elif isinstance(obj, (bool, str, type(None))):
         return obj
@@ -532,13 +531,16 @@ class FranceCropsFullDataset(TorchDataset):
         self.base_dataset.set_format(type='torch')
 
     def _validate_cache(self, cache_dir: str):
-        """Ensure cached parameters match current settings"""
+        """Ensure cached parameters match current settings with backward compatibility"""
         metadata_path = os.path.join(cache_dir, 'metadata.json')
         if not os.path.exists(metadata_path):
             raise ValueError(f"Metadata not found in {cache_dir}")
         
         with open(metadata_path, 'r') as f:
             saved_metadata = json.load(f)
+        
+        # Backward compatibility fix for tuple-stored-as-string
+        self._normalize_metadata(saved_metadata)
         
         current_metadata = self._get_metadata()
         if saved_metadata != current_metadata:
@@ -547,12 +549,26 @@ class FranceCropsFullDataset(TorchDataset):
                 f"Saved: {saved_metadata}\nCurrent: {current_metadata}"
             )
 
+    def _normalize_metadata(self, metadata: dict):
+        """Convert string-represented tuples to lists in metadata"""
+        if 'mask_params' in metadata:
+            mask_params = metadata['mask_params']
+            if 'strategies' in mask_params:
+                strategies = mask_params['strategies']
+                if isinstance(strategies, str):
+                    try:
+                        parsed = ast.literal_eval(strategies)
+                        if isinstance(parsed, tuple):
+                            mask_params['strategies'] = list(parsed)
+                    except:
+                        pass  # Keep original if parsing fails
+
     def _get_metadata(self) -> dict:
-        """Generate parameter signature with serializable data types"""
+        """Generate parameter signature with consistent serialization"""
         metadata = {
             'dataset': self.dataset_name,
             'split': self.split,
-            'mask_params': self.mask_params.__dict__,
+            'mask_params': convert_to_serializable(self.mask_params.__dict__),
             'shuffle': self.shuffle,
             'seed': self.seed,
             'val_ratio': self.val_ratio,
@@ -560,7 +576,7 @@ class FranceCropsFullDataset(TorchDataset):
             'stratify_by': 'y',
             'split_method': 'stratified'
         }
-        return convert_to_serializable(metadata)
+        return metadata
 
     def _save_cache(self, cache_dir: str):
         """Persist processed dataset with metadata"""
