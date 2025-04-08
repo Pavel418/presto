@@ -251,33 +251,22 @@ class Encoder(nn.Module):
 
     @staticmethod
     def mask_tokens(x, mask):
-        print(f"[Input] x.shape: {x.shape}")
-        print(f"[Input] mask.shape: {mask.shape}")
-
         mask = mask.bool()
-        print(f"[mask after bool()] dtype: {mask.dtype}, shape: {mask.shape}")
 
         # Move all non-masked values to the front of their rows
         sorted_mask, indices = torch.sort((~mask).int(), dim=1, descending=True, stable=True)
-        print(f"[sorted_mask] shape: {sorted_mask.shape}")
-        print(f"[indices] shape: {indices.shape}")
 
         x = x.gather(1, indices[:, :, None].expand_as(x))
-        print(f"[x after gather] shape: {x.shape}")
 
         # Set masked values to 0
         x = x * sorted_mask.unsqueeze(-1)
-        print(f"[x after masking] shape: {x.shape}")
 
         # Cut off to the length of the longest unmasked sequence
         max_length = sorted_mask.sum(-1).max()
-        print(f"[max_length] value: {max_length}")
 
         x = x[:, :max_length]
-        print(f"[x after trimming] shape: {x.shape}")
 
         updated_mask = 1 - sorted_mask[:, :max_length]
-        print(f"[updated_mask] shape: {updated_mask.shape}")
 
         return x, indices, updated_mask
 
@@ -292,46 +281,35 @@ class Encoder(nn.Module):
         # Initialize mask if None
         if mask is None:
             mask = torch.zeros_like(x, device=device).float()
-        print(f"[Encoder] mask initialized with shape: {mask.shape} (same as input x)")
-
-        print(f"[Encoder] pos_embed shape: {self.pos_embed.shape} [1, max_sequence_length, pos_embed_dim]")
 
         # Create positional embeddings expanded to match batch size
         positional_embedding = repeat(
             self.pos_embed[:, : x.shape[1], :], "b t d -> (repeat b) t d", repeat=x.shape[0]
         )
-        print(f"[Encoder] positional_embedding shape: {positional_embedding.shape} [batch, timesteps, pos_embed_dim]")
 
         all_tokens, all_masks = [], []
 
         # Process each channel group
         for channel_group, channel_idxs in self.band_groups.items():
-            print(f"\n[Encoder] Processing channel group: {channel_group} (indices: {channel_idxs})")
-
             # Extract tokens via patch embedding for this channel group
             tokens = self.eo_patch_embed[channel_group](x[:, :, channel_idxs])
-            print(f"[Encoder] tokens shape after eo_patch_embed: {tokens.shape} [batch, timesteps, embed_dim]")
 
             # Get channel-specific embedding and expand to match batch/timesteps
             channel_embed = self.channel_embed(
                 torch.tensor(self.band_group_to_idx[channel_group]).long().to(device)
             )
             channel_embedding = repeat(channel_embed, "d -> b t d", b=x.shape[0], t=x.shape[1])
-            print(f"[Encoder] channel_embedding shape: {channel_embedding.shape} [batch, timesteps, channel_embed_dim]")
 
             # Combine channel and positional embeddings
             channel_wise_positional_embedding = torch.cat(
                 (channel_embedding, positional_embedding), dim=-1
             )
-            print(f"[Encoder] channel_wise_positional_embedding shape: {channel_wise_positional_embedding.shape} [combined_dim]")
 
             # Add combined embeddings to tokens
             tokens += channel_wise_positional_embedding
-            print(f"[Encoder] tokens shape after embedding addition: {tokens.shape} [batch, timesteps, embed_dim]")
 
             # Compute mask for this group (max over channels)
             group_mask = torch.max(mask[:, :, channel_idxs], dim=-1)[0]
-            print(f"[Encoder] group_mask shape: {group_mask.shape} [batch, timesteps]")
 
             all_tokens.append(tokens)
             all_masks.append(group_mask)
@@ -339,14 +317,9 @@ class Encoder(nn.Module):
         # Concatenate tokens and masks across channel groups
         x = torch.cat(all_tokens, dim=1)
         mask = torch.cat(all_masks, dim=1)
-        print(f"\n[Encoder] x shape after channel concatenation: {x.shape} [batch, total_timesteps, embed_dim]")
-        print(f"[Encoder] mask shape after concatenation: {mask.shape} [batch, total_timesteps]")
 
         # Apply token masking and get indices
         x, orig_indices, upd_mask = self.mask_tokens(x, mask)
-        print(f"\n[Encoder] x shape after masking: {x.shape} [batch, total_timesteps, embed_dim]")
-        print(f"[Encoder] orig_indices shape: {orig_indices.shape} [batch, num_masked_tokens]")
-        print(f"[Encoder] upd_mask shape: {upd_mask.shape} [batch, total_timesteps] (1=masked)")
 
         # orig_indices = torch.cat(
         #     (torch.zeros(x.shape[0])[:, None].to(device).int(), orig_indices + 1),
@@ -354,30 +327,23 @@ class Encoder(nn.Module):
         # )
 
         # Pass through transformer blocks
-        print(f"\n[Encoder] x shape before transformer blocks: {x.shape}")
         for blk in self.blocks:
             x = blk(x, attn_mask=~upd_mask.bool())
-        print(f"[Encoder] x shape after transformer blocks: {x.shape}")
 
         if eval_task:
             # Compute mean of unmasked tokens
             x_for_mean = x * (1 - upd_mask.unsqueeze(-1))
-            print(f"\n[Encoder] x_for_mean shape: {x_for_mean.shape} [mask-adjusted features]")
 
             x_mean = x_for_mean.sum(dim=1)
-            print(f"[Encoder] x_mean shape before normalization: {x_mean.shape} [batch, embed_dim]")
 
             x_mean = x_mean / torch.sum(1 - upd_mask, -1, keepdim=True)
-            print(f"[Encoder] x_mean shape after normalization: {x_mean.shape} [batch, embed_dim]")
 
             # Apply final layer norm
             output = self.norm(x_mean)
-            print(f"[Encoder] Final output shape (eval_mode): {output.shape} [batch, embed_dim]")
             return output
 
         # Return full sequence if not in eval mode
         output = self.norm(x)
-        print(f"\n[Encoder] Final output shape (non-eval_mode): {output.shape} [full sequence]")
         return output, orig_indices, upd_mask
 
 
@@ -427,18 +393,13 @@ class Decoder(nn.Module):
             }
         )
         self.channel_embeddings = channel_embeddings
-        print(f"[Decoder] channel_embeddings.weight.shape: {channel_embeddings.weight.shape}")
 
         channel_embedding_dims = channel_embeddings.weight.shape[-1]
-        print(f"[Decoder] channel_embedding_dims: {channel_embedding_dims}")
 
         remaining_embeddings = decoder_embed_dim - channel_embedding_dims
-        print(f"[Decoder] decoder_embed_dim: {decoder_embed_dim}")
-        print(f"[Decoder] remaining_embeddings (for positional): {remaining_embeddings}")
 
         # Save max sequence length
         self.max_sequence_length = max_sequence_length
-        print(f"[Decoder] max_sequence_length: {self.max_sequence_length}")
 
         # Positional embedding size is half of remaining
         pos_embed_shape = (1, max_sequence_length, remaining_embeddings)
@@ -446,8 +407,6 @@ class Decoder(nn.Module):
             torch.zeros(pos_embed_shape),
             requires_grad=False,
         )
-        print(f"[Decoder] self.pos_embed.shape: {self.pos_embed.shape}")
-
 
         self.initialize_weights()
 
@@ -470,12 +429,8 @@ class Decoder(nn.Module):
             nn.init.constant_(m.weight, 1.0)
 
     def add_masked_tokens(self, x, orig_indices, x_mask):
-        print(f"[Decoder][Input] x.shape: {x.shape}")
-        print(f"[Decoder][Input] orig_indices.shape: {orig_indices.shape}")
-        print(f"[Decoder][Input] x_mask.shape: {x_mask.shape}")
 
         all_masked = repeat(self.mask_token, "d -> b t d", b=x.shape[0], t=orig_indices.shape[1])
-        print(f"[Decoder] all_masked.shape: {all_masked.shape}")
 
         mask = torch.cat(
             (
@@ -484,32 +439,23 @@ class Decoder(nn.Module):
             ),
             dim=-1,
         )
-        print(f"[Decoder] mask.shape after cat: {mask.shape}")
 
         out = all_masked.clone()
-        print(f"[Decoder] out.shape after clone: {out.shape}")
 
         # Insert real tokens into correct spots (temporarily at the start of each row)
         out[~mask.bool()] = x[~x_mask.bool()]
-        print(f"[Decoder] out.shape after inserting unmasked x: {out.shape}")
 
         # Scatter to original positions
         out = out.scatter(1, orig_indices[:, :, None].expand_as(out), out)
-        print(f"[Decoder] out.shape after scatter: {out.shape}")
 
         return out
 
     def add_embeddings(self, x):
-        print(f"[Input] x.shape: {x.shape}")
-
         num_channel_groups = len(self.band_group_to_idx)
-        print(f"[Info] num_channel_groups: {num_channel_groups}")
 
         num_timesteps = int(x.shape[1] / num_channel_groups)
-        print(f"[Info] num_timesteps: {num_timesteps}")
 
         remove_mask = torch.full(size=(num_timesteps * num_channel_groups,), fill_value=False)
-        print(f"[remove_mask] shape: {remove_mask.shape}")
 
         positional_embedding = repeat(
             self.pos_embed[:, :num_timesteps, :],
@@ -517,63 +463,44 @@ class Decoder(nn.Module):
             b2=x.shape[0],
             t2=num_channel_groups,
         )
-        print(f"[positional_embedding after repeat] shape: {positional_embedding.shape}")
 
         positional_embedding = positional_embedding[:, ~remove_mask]
-        print(f"[positional_embedding after masking] shape: {positional_embedding.shape}")
 
-        print(f"[channel_embeddings] shape: {self.channel_embeddings.weight.shape}")
         channel_embeddings = torch.repeat_interleave(
             self.channel_embeddings.weight, repeats=num_timesteps, dim=0
         )
-        print(f"[channel_embeddings after repeat_interleave] shape: {channel_embeddings.shape}")
 
         channel_embeddings = repeat(channel_embeddings, "c d -> b c d", b=x.shape[0])
-        print(f"[channel_embeddings after repeat] shape: {channel_embeddings.shape}")
 
         channel_embeddings = channel_embeddings[:, ~remove_mask]
-        print(f"[channel_embeddings after masking] shape: {channel_embeddings.shape}")
 
         positional_embedding = torch.cat(
             (channel_embeddings, positional_embedding), dim=-1
         )
-        print(f"[positional_embedding after concat with channel_embeddings] shape: {positional_embedding.shape}")
 
         x += positional_embedding
-        print(f"[Output] x.shape after adding positional_embedding: {x.shape}")
 
         return x
 
     def reconstruct_inputs(self, x) -> Tuple[torch.Tensor]:
-        print(f"[Decoder][Input] x.shape: {x.shape}")
-
         # Split into channel groups
         num_channel_groups = len(self.band_group_to_idx)
-        print(f"[Decoder] num_channel_groups: {num_channel_groups}")
 
         num_timesteps = int(x.shape[1] / num_channel_groups)
-        print(f"[Decoder] num_timesteps: {num_timesteps}")
 
         mask = torch.full((x.shape[1],), True, device=x.device)
-        print(f"[Decoder] mask.shape: {mask.shape}, mask.sum(): {mask.sum().item()}")
 
         x = x[:, mask]
-        print(f"[Decoder] x.shape after applying mask: {x.shape}")
 
         x = x.view(x.shape[0], num_channel_groups, num_timesteps, x.shape[-1])
-        print(f"[Decoder] x.shape after view: {x.shape}")
 
         eo_output = []
         for group_name, idx in self.band_group_to_idx.items():
-            print(f"[Decoder] Processing group '{group_name}' at index {idx}")
             group_tokens = x[:, idx]
-            print(f"[Decoder] group_tokens.shape ({group_name}): {group_tokens.shape}")
             decoded = self.eo_decoder_pred[group_name](group_tokens)
-            print(f"[Decoder] decoded.shape ({group_name}): {decoded.shape}")
             eo_output.append(decoded)
 
         output = torch.cat(eo_output, dim=-1)
-        print(f"[Decoder][Output] Concatenated output shape: {output.shape}")
 
         return output
 
@@ -708,10 +635,6 @@ class Presto(Seq2Seq):
             mask=mask,
             eval_task=False,
         )
-
-        print(f"[Presto] x.shape: {x.shape}")
-        print(f"[Presto] orig_indices.shape: {orig_indices.shape}")
-        print(f"[Presto] x_mask.shape: {x_mask.shape}")
 
         return self.decoder(x, orig_indices, x_mask)
 

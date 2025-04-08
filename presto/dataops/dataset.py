@@ -621,7 +621,6 @@ class FranceCropsFullDataset(TorchDataset):
         bands = ["B1", "B2", "B3", "B4", "B5", "B6", "B7", "B8", "B8A", "B9", "B11", "B12"]
         presto_input, mask = construct_single_presto_input(s2=x_tensor, s2_bands=bands)
         mask, x, y, strat = self.mask_params.mask_data(presto_input)
-        print(f"x shape: {x.shape}, Mask shape: {mask.shape}")
 
         return {
             "x": x, "y": y, "mask": mask, "strategy": strat
@@ -639,12 +638,7 @@ class FranceCropsFullDataset(TorchDataset):
         if self.shuffle:
             expanded_dataset = expanded_dataset.shuffle(seed=self.seed)
         # Convert to Presto format
-        print(f"[DATASET] dataset type: {type(expanded_dataset)}")
-        sampled_dataset = expanded_dataset.select(range(10))
-        print(f"[DATASET] dataset type after slicing: {type(expanded_dataset)}")
         processed_dataset = sampled_dataset.map(self._convert_to_presto)
-        print(f"[DATASET] dataset type after processing: {type(processed_dataset)}")
-        print(f"[DATASET] dataset entry shape: {torch.tensor(processed_dataset[0]['x']).shape}")
         return processed_dataset
 
     def __len__(self) -> int:
