@@ -642,7 +642,7 @@ class FranceCropsFullDataset(TorchDataset):
         print(f"[DATASET] dataset type: {type(expanded_dataset)}")
         sampled_dataset = expanded_dataset.select(range(10))
         print(f"[DATASET] dataset type after slicing: {type(expanded_dataset)}")
-        processed_dataset = expanded_dataset.map(self._convert_to_presto)
+        processed_dataset = sampled_dataset.map(self._convert_to_presto)
         print(f"[DATASET] dataset entry shape: {processed_dataset[0]['x'].shape}")
         return processed_dataset
 
