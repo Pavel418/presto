@@ -484,12 +484,14 @@ def convert_to_serializable(obj):
         return {k: convert_to_serializable(v) for k, v in obj.items()}
     elif isinstance(obj, list):
         return [convert_to_serializable(v) for v in obj]
+    elif isinstance(obj, tuple):  # Handle tuples by converting to lists
+        return [convert_to_serializable(v) for v in obj]
     elif isinstance(obj, (bool, str, type(None))):
         return obj
     elif hasattr(obj, '__dict__'):
         return convert_to_serializable(obj.__dict__)
     else:
-        return str(obj)  # Fallback for unexpected types
+        return str(obj)
 
 class FranceCropsFullDataset(TorchDataset):
     def __init__(
@@ -639,7 +641,6 @@ class FranceCropsFullDataset(TorchDataset):
         bands = ["B1", "B2", "B3", "B4", "B5", "B6", "B7", "B8", "B8A", "B9", "B11", "B12"]
         presto_input, mask = construct_single_presto_input(s2=x_tensor, s2_bands=bands)
         mask, x, y, strat = self.mask_params.mask_data(presto_input)
-        print("[DATASET] Presto input shape:", x.shape, "Mask shape:", mask.shape, "y shape:", y.shape)
 
         return {
             "x": x, "y": y, "mask": mask, "strategy": strat
