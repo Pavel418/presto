@@ -150,15 +150,6 @@ seed_everything(seed)
 
 output_parent_dir = Path(args["output_dir"]) if args["output_dir"] else Path(__file__).parent
 run_id = None
-if wandb_enabled:
-    import wandb
-
-    run = wandb.init(
-        entity=wandb_org,
-        project="lem",
-        dir=output_parent_dir,
-    )
-    run_id = cast(Run, run).id
 
 logging_dir = output_parent_dir / "output" / timestamp_dirname(run_id)
 logging_dir.mkdir(exist_ok=True, parents=True)
@@ -269,6 +260,7 @@ num_validations = 0
 
 with tqdm(range(num_epochs), desc="Epoch") as tqdm_epoch:
     for epoch in tqdm_epoch:
+        print(f"[TRAIN] Starting epoch {epoch}")
         # ------------------------ Training ----------------------------------------
         total_train_loss = 0.0
         total_eo_train_loss = 0.0
@@ -278,7 +270,6 @@ with tqdm(range(num_epochs), desc="Epoch") as tqdm_epoch:
         model.train()
         for epoch_step, b in enumerate(train_dataloader):
             mask, x, y = b["mask"].to(device), b["x"].to(device), b["y"].to(device)
-            # zero the parameter gradients
             optimizer.zero_grad()
             lr = adjust_learning_rate(
                 optimizer,
@@ -288,12 +279,7 @@ with tqdm(range(num_epochs), desc="Epoch") as tqdm_epoch:
                 max_learning_rate,
                 min_learning_rate,
             )
-
-            # Get model outputs and calculate loss
-            y_pred = model(
-                x, mask=mask
-            )
-
+            y_pred = model(x, mask=mask)
             loss = mse(y_pred[mask], y[mask])
 
             num_eo_masked = len(y_pred[mask])
@@ -310,8 +296,11 @@ with tqdm(range(num_epochs), desc="Epoch") as tqdm_epoch:
             train_size += current_batch_size
             training_step += 1
 
+            print(f"[TRAIN] Step {training_step} | Loss: {loss.item():.4f} | LR: {lr:.6f}")
+
             # ------------------------ Validation --------------------------------------
             if training_step % val_per_n_steps == 0:
+                print(f"[VALIDATION] Running validation at step {training_step}")
                 total_val_loss = 0.0
                 total_eo_val_loss = 0.0
                 total_val_num_eo_values_masked = 0
@@ -325,10 +314,7 @@ with tqdm(range(num_epochs), desc="Epoch") as tqdm_epoch:
                             b["x"].to(device),
                             b["y"].to(device),
                         )
-                        # Get model outputs and calculate loss
-                        y_pred = model(
-                            x, mask=mask
-                        )
+                        y_pred = model(x, mask=mask)
                         loss = mse(y_pred[mask], y[mask])
                         num_eo_masked = len(y_pred[mask])
                         total_loss = loss
@@ -339,13 +325,13 @@ with tqdm(range(num_epochs), desc="Epoch") as tqdm_epoch:
                         total_val_num_eo_values_masked += num_eo_masked
                         num_val_updates_captured += 1
 
-                # ------------------------ Metrics + Logging -------------------------------
-                # train_loss now reflects the value against which we calculate gradients
                 train_loss = total_train_loss / num_updates_being_captured
                 train_eo_loss = total_eo_train_loss / max(total_num_eo_values_masked, 1)
 
                 val_loss = total_val_loss / num_val_updates_captured
                 val_eo_loss = total_eo_val_loss / max(total_val_num_eo_values_masked, 1)
+
+                print(f"[VALIDATION] Epoch {epoch} | Step {training_step} | Val Loss: {val_loss:.4f} | Train Loss: {train_loss:.4f}")
 
                 if "train_size" not in training_config and "val_size" not in training_config:
                     training_config["train_size"] = train_size
@@ -370,10 +356,10 @@ with tqdm(range(num_epochs), desc="Epoch") as tqdm_epoch:
                     model_path.mkdir(exist_ok=True, parents=True)
 
                     best_model_path = model_path / f"{model_name}{epoch}.pt"
-                    logger.info(f"Saving best model to: {best_model_path}")
+                    logger.info(f"[VALIDATION] Saving best model to: {best_model_path}")
                     torch.save(model.state_dict(), best_model_path)
 
-                # reset training logging
+                # Reset training tracking
                 total_train_loss = 0.0
                 total_eo_train_loss = 0.0
                 total_num_eo_values_masked = 0
