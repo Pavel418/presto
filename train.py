@@ -260,17 +260,28 @@ num_validations = 0
 
 with tqdm(range(num_epochs), desc="Epoch") as tqdm_epoch:
     for epoch in tqdm_epoch:
-        print(f"[TRAIN] Starting epoch {epoch}")
-        # ------------------------ Training ----------------------------------------
+        print(f"\n[TRAIN] Starting Epoch {epoch}/{num_epochs}")
+        
+        # ------------------------ Training Setup ----------------------------------------
         total_train_loss = 0.0
         total_eo_train_loss = 0.0
         total_num_eo_values_masked = 0
         num_updates_being_captured = 0
         train_size = 0
         model.train()
+        
         for epoch_step, b in enumerate(train_dataloader):
+            print(f"\n[TRAIN] Epoch Step {epoch_step}")
+
+            # Load batch to device
             mask, x, y = b["mask"].to(device), b["x"].to(device), b["y"].to(device)
+            print(f"[TRAIN] Batch loaded | x: {x.shape}, y: {y.shape}, mask: {mask.shape}")
+
+            # Zero gradients
             optimizer.zero_grad()
+            print(f"[TRAIN] Gradients zeroed")
+
+            # Adjust learning rate
             lr = adjust_learning_rate(
                 optimizer,
                 epoch_step / dataloader_length + epoch,
@@ -279,63 +290,81 @@ with tqdm(range(num_epochs), desc="Epoch") as tqdm_epoch:
                 max_learning_rate,
                 min_learning_rate,
             )
+            print(f"[TRAIN] Adjusted learning rate: {lr:.6f}")
+
+            # Forward pass
             y_pred = model(x, mask=mask)
+            print(f"[TRAIN] Forward pass completed")
+
+            # Compute loss
             loss = mse(y_pred[mask], y[mask])
-
             num_eo_masked = len(y_pred[mask])
+            print(f"[TRAIN] Loss computed: {loss.item():.6f} on {num_eo_masked} masked EO values")
 
-            total_loss = loss
-            total_loss.backward()
+            # Backward pass
+            loss.backward()
+            print(f"[TRAIN] Backward pass completed")
+
+            # Optimizer step
             optimizer.step()
+            print(f"[TRAIN] Optimizer step done")
 
+            # Update tracking variables
             current_batch_size = len(x)
-            total_train_loss += total_loss.item()
+            total_train_loss += loss.item()
             total_eo_train_loss += loss.item() * num_eo_masked
             total_num_eo_values_masked += num_eo_masked
             num_updates_being_captured += 1
             train_size += current_batch_size
             training_step += 1
 
-            print(f"[TRAIN] Step {training_step} | Loss: {loss.item():.4f} | LR: {lr:.6f}")
+            print(f"[TRAIN] Step {training_step} | Train Loss Accum: {total_train_loss:.4f}, EO Loss Accum: {total_eo_train_loss:.4f}")
 
             # ------------------------ Validation --------------------------------------
             if training_step % val_per_n_steps == 0:
-                print(f"[VALIDATION] Running validation at step {training_step}")
+                print(f"\n[VALIDATION] Starting validation at training step {training_step}")
+                
                 total_val_loss = 0.0
                 total_eo_val_loss = 0.0
                 total_val_num_eo_values_masked = 0
                 num_val_updates_captured = 0
                 val_size = 0
                 model.eval()
+
                 with torch.no_grad():
-                    for b in tqdm(val_dataloader, desc="Validate"):
-                        mask, x, y = (
-                            b["mask"].to(device),
-                            b["x"].to(device),
-                            b["y"].to(device),
-                        )
+                    for val_step, b in enumerate(tqdm(val_dataloader, desc="Validate")):
+                        mask, x, y = b["mask"].to(device), b["x"].to(device), b["y"].to(device)
+                        print(f"[VALIDATION] Batch {val_step} | x: {x.shape}, y: {y.shape}, mask: {mask.shape}")
+
                         y_pred = model(x, mask=mask)
+                        print(f"[VALIDATION] Forward pass complete")
+
                         loss = mse(y_pred[mask], y[mask])
                         num_eo_masked = len(y_pred[mask])
                         total_loss = loss
                         current_batch_size = len(x)
                         val_size += current_batch_size
+
                         total_val_loss += total_loss.item()
                         total_eo_val_loss += loss.item() * num_eo_masked
                         total_val_num_eo_values_masked += num_eo_masked
                         num_val_updates_captured += 1
 
+                        print(f"[VALIDATION] Batch {val_step} | Loss: {loss.item():.6f}, EO masked: {num_eo_masked}")
+
+                # ------------------------ Metrics + Logging -------------------------------
                 train_loss = total_train_loss / num_updates_being_captured
                 train_eo_loss = total_eo_train_loss / max(total_num_eo_values_masked, 1)
-
                 val_loss = total_val_loss / num_val_updates_captured
                 val_eo_loss = total_eo_val_loss / max(total_val_num_eo_values_masked, 1)
 
-                print(f"[VALIDATION] Epoch {epoch} | Step {training_step} | Val Loss: {val_loss:.4f} | Train Loss: {train_loss:.4f}")
+                print(f"[VALIDATION] Metrics computed | Train Loss: {train_loss:.4f}, Val Loss: {val_loss:.4f}")
+                print(f"[VALIDATION] EO Train Loss: {train_eo_loss:.4f}, EO Val Loss: {val_eo_loss:.4f}")
 
                 if "train_size" not in training_config and "val_size" not in training_config:
                     training_config["train_size"] = train_size
                     training_config["val_size"] = val_size
+                    print("[VALIDATION] Training/Validation sizes recorded")
 
                 to_log = {
                     "train_loss": train_loss,
@@ -346,8 +375,10 @@ with tqdm(range(num_epochs), desc="Epoch") as tqdm_epoch:
                     "epoch": epoch,
                     "lr": lr,
                 }
+
                 tqdm_epoch.set_postfix(loss=val_loss)
 
+                # Save best model
                 if lowest_validation_loss is None or val_loss < lowest_validation_loss:
                     lowest_validation_loss = val_loss
                     best_val_epoch = epoch
@@ -359,7 +390,8 @@ with tqdm(range(num_epochs), desc="Epoch") as tqdm_epoch:
                     logger.info(f"[VALIDATION] Saving best model to: {best_model_path}")
                     torch.save(model.state_dict(), best_model_path)
 
-                # Reset training tracking
+                # ------------------------ Reset Training Logging ---------------------------
+                print(f"[TRAIN] Resetting training accumulators after validation")
                 total_train_loss = 0.0
                 total_eo_train_loss = 0.0
                 total_num_eo_values_masked = 0
