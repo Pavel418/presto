@@ -1,6 +1,6 @@
 {
     "encoder_embedding_size": 128,
-    "channel_embed_ratio": 0.25,
+    "channel_embed_ratio": 0.5,
     "encoder_depth": 2,
     "mlp_ratio": 4,
     "encoder_num_heads": 8,

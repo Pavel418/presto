@@ -10,25 +10,12 @@ from typing import List, Tuple, cast
 import matplotlib.pyplot as plt
 import torch
 import torch.nn as nn
-import webdataset as wds
 from torch import optim
 from tqdm import tqdm
-from wandb.sdk.wandb_run import Run
-
 from presto import Presto
 from presto.dataops import BANDS_GROUPS_IDX, MASK_STRATEGIES, MaskParams, plot_masked
 from presto.dataops.dataset import (
-    TAR_BUCKET,
     FranceCropsFullDataset,
-    S1_S2_ERA5_SRTM_DynamicWorldMonthly_2020_2021,
-)
-from presto.eval import (
-    AlgaeBloomsEval,
-    CropHarvestEval,
-    CropHarvestMultiClassValidation,
-    EuroSatEval,
-    EvalTask,
-    FuelMoistureEval,
 )
 from presto.model import LossWrapper, adjust_learning_rate, param_groups_weight_decay
 from presto.utils import (
@@ -42,18 +29,14 @@ from presto.utils import (
 )
 
 logger = logging.getLogger("__main__")
-os.environ["GOOGLE_CLOUD_PROJECT"] = "large-earth-model"
+# os.environ["GOOGLE_CLOUD_PROJECT"] = "large-earth-model"
 
-sys.argv = [
-    'train.py',  # placeholder for script name
-    '--train_url', 'data/dw_144_mini_shard_44.tar',
-    '--val_url', 'data/dw_144_mini_shard_44.tar',
-    '--val_per_n_steps', '1',
-    '--cropharvest_per_n_validations', '0',
-    '--skip_finetuning'
-]
-__file__ = 'train.py'
-os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
+# sys.argv = [
+#     'train.py',  # placeholder for script name
+#     '--val_per_n_steps', '1',
+# ]
+# __file__ = 'train.py'
+# os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
 
 # Parse command line arguments
 argparser = argparse.ArgumentParser()
@@ -76,29 +59,12 @@ argparser.add_argument(
 )
 argparser.add_argument("--n_epochs", type=int, default=20)
 argparser.add_argument("--val_per_n_steps", type=int, default=1000)
-argparser.add_argument(
-    "--cropharvest_per_n_validations",
-    type=int,
-    default=10,
-    help="0 to skip cropharvest validation",
-)
-argparser.add_argument(
-    "--cropharvest_val_n_per_class",
-    type=int,
-    default=-1,
-    help="-1 for no limit",
-)
 argparser.add_argument("--max_learning_rate", type=float, default=0.001)
 argparser.add_argument("--min_learning_rate", type=float, default=0.0)
 argparser.add_argument("--warmup_epochs", type=int, default=2)
 
 argparser.add_argument("--weight_decay", type=float, default=0.05)
-argparser.add_argument(
-    "--dynamic_world_loss_weight",
-    type=float,
-    default=2,
-    help="Each dynamic world instance we be weighted by this amount relative to each eo instance",
-)
+
 argparser.add_argument("--batch_size", type=int, default=4096)
 argparser.add_argument(
     "--dataloader_length", type=int, default=5950, help="-1 to re-estimate dataloader length"
@@ -117,48 +83,16 @@ argparser.add_argument(
 )
 argparser.add_argument("--mask_ratio", type=float, default=0.75)
 argparser.add_argument("--seed", type=int, default=DEFAULT_SEED)
-argparser.add_argument("--wandb", dest="wandb", action="store_true")
-argparser.add_argument("--wandb_plots", type=int, default=3)
-argparser.add_argument("--wandb_org", type=str, default="nasa-harvest")
 
-argparser.add_argument(
-    "--train_url",
-    type=str,
-    default=f"gs://{TAR_BUCKET}/S1_S2_ERA5_SRTM_2020_2021_DynamicWorldMonthly2020_2021_tars/"
-    + "dw_144_shard_{0..58}.tar",
-)
-argparser.add_argument(
-    "--val_url",
-    type=str,
-    default=f"gs://{TAR_BUCKET}/S1_S2_ERA5_SRTM_2020_2021_DynamicWorldMonthly2020_2021_tars/"
-    + "dw_144_shard_59.tar",
-)
-argparser.add_argument("--skip_finetuning", dest="skip_finetuning", action="store_true")
-
-argparser.set_defaults(wandb=False)
-argparser.set_defaults(skip_finetuning=False)
 args = argparser.parse_args().__dict__
 
 model_name = args["model_name"]
 seed: int = args["seed"]
 path_to_config = args["path_to_config"]
-wandb_enabled: bool = args["wandb"]
-wandb_plots: int = args["wandb_plots"]
-wandb_org: str = args["wandb_org"]
-
 seed_everything(seed)
 
 output_parent_dir = Path(args["output_dir"]) if args["output_dir"] else Path(__file__).parent
 run_id = None
-if wandb_enabled:
-    import wandb
-
-    run = wandb.init(
-        entity=wandb_org,
-        project="lem",
-        dir=output_parent_dir,
-    )
-    run_id = cast(Run, run).id
 
 logging_dir = output_parent_dir / "output" / timestamp_dirname(run_id)
 logging_dir.mkdir(exist_ok=True, parents=True)
@@ -171,9 +105,6 @@ if data_dir != "":
 
 num_epochs = args["n_epochs"]
 val_per_n_steps = args["val_per_n_steps"]
-cropharvest_per_n_validations = args["cropharvest_per_n_validations"]
-cropharvest_val_n_per_class = args["cropharvest_val_n_per_class"]
-dynamic_world_loss_weight = args["dynamic_world_loss_weight"]
 max_learning_rate = args["max_learning_rate"]
 min_learning_rate = args["min_learning_rate"]
 warmup_epochs = args["warmup_epochs"]
@@ -196,8 +127,6 @@ if (batch_size != argparser.get_default("batch_size")) & (
         "Dataloader length calculated for a specific batch size. "
         "Set dataloader_length to -1 to recalculate"
     )
-
-skip_finetuning: bool = args["skip_finetuning"]
 
 if path_to_config == "":
     path_to_config = config_dir / "default.json"
@@ -256,7 +185,6 @@ training_config = {
     "decoder": model.decoder.__class__,
     "optimizer": optimizer.__class__.__name__,
     "eo_loss": mse.loss.__class__.__name__,
-    "dynamic_world_loss": ce.loss.__class__.__name__,
     "device": device,
     **args,
     **model_kwargs,

@@ -182,7 +182,7 @@ class Encoder(nn.Module):
     def __init__(
         self,
         embedding_size: int = 128,
-        channel_embed_ratio: float = 0.25,
+        channel_embed_ratio: float = 0.5,
         depth=2,
         mlp_ratio=2,
         num_heads=8,
@@ -642,7 +642,7 @@ class Presto(Seq2Seq):
     def construct(
         cls,
         encoder_embedding_size: int = 128,
-        channel_embed_ratio: float = 0.25,
+        channel_embed_ratio: float = 0.5,
         encoder_depth=2,
         mlp_ratio=4,
         encoder_num_heads=8,
