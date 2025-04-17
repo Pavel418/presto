@@ -116,8 +116,6 @@ if (len(mask_strategies) == 1) and (mask_strategies[0] == "all"):
     mask_strategies = MASK_STRATEGIES
 mask_ratio: float = args["mask_ratio"]
 
-train_url: str = args["train_url"]
-val_url: str = args["val_url"]
 dataloader_length: int = args["dataloader_length"]
 
 if (batch_size != argparser.get_default("batch_size")) & (
