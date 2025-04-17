@@ -25,6 +25,7 @@ logger.info("Using data dir: %s" % data_dir)
 config_dir = Path(__file__).parent.parent / "config"
 default_model_path = data_dir / "default_model.pt"
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+logger.info("Using device: %s" % device)
 DEFAULT_SEED: int = 42
 
 
