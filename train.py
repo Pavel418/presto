@@ -168,6 +168,7 @@ if dataloader_length == -1:
 
 # ------------ Model -----------------------------------------
 logger.info("Setting up model")
+logger.info(f"Device: {device}")
 model = Presto.construct(**model_kwargs)
 model.to(device)
 
