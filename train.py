@@ -203,7 +203,8 @@ with tqdm(range(num_epochs), desc="Epoch") as tqdm_epoch:
         num_updates_being_captured = 0
         train_size = 0
         model.train()
-        for epoch_step, b in enumerate(train_dataloader):
+        train_bar = tqdm(train_dataloader, desc=" Train", leave=False, total=len(train_dataloader))
+        for epoch_step, b in enumerate(train_bar, start=1):
             mask, x, y = b["mask"].to(device), b["x"].to(device), b["y"].to(device)
             # zero the parameter gradients
             optimizer.zero_grad()
