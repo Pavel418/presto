@@ -626,7 +626,7 @@ class FranceCropsFullDataset(TorchDataset):
             y = examples['y']
             strat = None
             return {
-                "x": x, "y": y, "mask": mask, "strategy": strat
+                "x": x, "y": y, "mask": mask
             }
         
         mask, x, y, strat = self.mask_params.mask_data(presto_input)
