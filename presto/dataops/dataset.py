@@ -532,7 +532,7 @@ class FranceCropsFullDataset(TorchDataset):
         metadata = {
             'dataset': self.dataset_name,
             'split': self.split,
-            'mask_params': self.mask_params.__dict__,
+            'mask_params': getattr(self.mask_params, '__dict__', None) if getattr(self, 'mask_params', None) else None,
             'shuffle': self.shuffle,
             'seed': self.seed,
             'val_ratio': self.val_ratio,
