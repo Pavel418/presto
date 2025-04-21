@@ -649,7 +649,7 @@ class Presto(Seq2Seq):
         decoder_embedding_size=128,
         decoder_depth=2,
         decoder_num_heads=8,
-        max_sequence_length=24,
+        max_sequence_length=60,
     ):
         encoder = Encoder(
             embedding_size=encoder_embedding_size,

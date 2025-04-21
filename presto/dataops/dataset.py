@@ -477,7 +477,7 @@ class FranceCropsFullDataset(TorchDataset):
         self,
         dataset: str,
         split: str,
-        mask_params: MaskParams,
+        mask_params: Optional[MaskParams] = None,
         shuffle: bool = True,
         seed: int = 42,
         cache_dir: Optional[str] = None,
@@ -620,6 +620,15 @@ class FranceCropsFullDataset(TorchDataset):
         x_tensor = torch.tensor(examples['x'], dtype=torch.float32)
         bands = ["B1", "B2", "B3", "B4", "B5", "B6", "B7", "B8", "B8A", "B9", "B11", "B12"]
         presto_input, mask = construct_single_presto_input(s2=x_tensor, s2_bands=bands)
+
+        if self.mask_params is None:
+            x = x_tensor
+            y = examples['y']
+            strat = None
+            return {
+                "x": x, "y": y, "mask": mask, "strategy": strat
+            }
+        
         mask, x, y, strat = self.mask_params.mask_data(presto_input)
 
         return {
