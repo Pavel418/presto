@@ -102,6 +102,7 @@ def construct_single_presto_input(
         else:
             x = (x + torch.tensor(ADD_BY)) / torch.tensor(DIVIDE_BY)
     if ndvi:        
+        print(f"Adding NDVI band to input of shape {x.shape}")
         if len(x.shape) == 2:
             x[:, len(s2_bands)] = calculate_ndvi(x, s2_bands)
         else:
