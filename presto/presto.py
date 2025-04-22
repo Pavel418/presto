@@ -293,6 +293,8 @@ class Encoder(nn.Module):
         for channel_group, channel_idxs in self.band_groups.items():
             # Extract tokens via patch embedding for this channel group
             print(f"[ENCODER] x shape: {x.shape}, channel_idxs shape: {channel_idxs.shape if hasattr(channel_idxs, 'shape') else f'len={len(channel_idxs)}'}")
+            if not hasattr(channel_idxs, 'shape'):
+                print(f"[ENCODER] channel_idxs: {channel_idxs}")
             tokens = self.eo_patch_embed[channel_group](x[:, :, channel_idxs])
 
             # Get channel-specific embedding and expand to match batch/timesteps
