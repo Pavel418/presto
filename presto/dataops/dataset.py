@@ -622,7 +622,7 @@ class FranceCropsFullDataset(TorchDataset):
         presto_input, mask = construct_single_presto_input(s2=x_tensor, s2_bands=bands)
 
         if self.mask_params is None:
-            x = x_tensor
+            x = presto_input
             y = examples['y']
             strat = None
             return {
