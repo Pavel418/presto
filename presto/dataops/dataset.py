@@ -822,7 +822,7 @@ class FranceCropsMiniDataset(TorchDataset):
         with open(metadata_path, 'w') as f:
             f.write(self._get_metadata())
 
-    def _load(self) -> Dataset:
+    def _load(self) -> datasets.Dataset:
         """Handle stratified three-way split from original dataset"""
         if self.split not in ['train', 'validation', 'test']:
             raise ValueError(f"Invalid split: {self.split}")
@@ -833,17 +833,17 @@ class FranceCropsMiniDataset(TorchDataset):
                 y = np.load(self.directory / "train_dataset" / f"subset_{i:02d}" / "y.npy")
 
                 if i == 0:
-                    full_dataset = Dataset.from_dict({"x": x, "y": y})
+                    full_dataset = datasets.Dataset.from_dict({"x": x, "y": y})
                 else:
                     full_dataset = concatenate_datasets([full_dataset, Dataset.from_dict({"x": x, "y": y})])
         elif self.split == "test":
             x = np.load(self.directory / f"{self.split}_dataset" / "x.npy")
             y = np.load(self.directory / f"{self.split}_dataset" / "y.npy")
-            full_dataset = Dataset.from_dict({"x": x, "y": y})
+            full_dataset = datasets.Dataset.from_dict({"x": x, "y": y})
         else:
             x = np.load(self.directory / f"{self.split}_dataset" / "x.npy")
             y = np.load(self.directory / f"{self.split}_dataset" / "y.npy")
-            full_dataset = Dataset.from_dict({"x": x, "y": y})
+            full_dataset = datasets.Dataset.from_dict({"x": x, "y": y})
             full_dataset = full_dataset.select(range(self.val_subset_size))
 
         return full_dataset
@@ -877,7 +877,7 @@ class FranceCropsMiniDataset(TorchDataset):
             "x": x, "y": y, "mask": mask, "strategy": strat
         }
 
-    def _preprocess(self) -> Dataset:
+    def _preprocess(self) -> datasets.Dataset:
         """Apply preprocessing steps including expansion and conversion."""
         # Expand the dataset
         expanded_dataset = self.base_dataset.map(
