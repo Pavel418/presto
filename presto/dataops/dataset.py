@@ -1,3 +1,4 @@
+from io import BytesIO
 import json
 import logging
 import os
@@ -682,7 +683,6 @@ class FranceCropsContrastDataset(IterableDataset):
         self.download_thread = None
 
     def __iter__(self):
-        chunk_idx = self.start_chunk
         self.download_thread = threading.Thread(target=self._download_chunks)
         self.download_thread.start()
         shuffle_buffer = []
@@ -691,72 +691,67 @@ class FranceCropsContrastDataset(IterableDataset):
             chunk_data = self.chunk_queue.get()
             if chunk_data is None:  # Termination signal
                 break
-            chunk_url = f"{self.base_url}/chunk_{chunk_idx}.npz"
-            resp = requests.get(chunk_url, stream=True)
-            
-            # Stop if chunk doesn't exist
-            if resp.status_code == 404:
-                print(f"Chunk {chunk_idx} not found. Stopping iteration.")
-                break
-            resp.raise_for_status()
 
-            # Download chunk
-            tmp_file = f"chunk_{chunk_idx}.npz"
-            with open(tmp_file, "wb") as f:
-                for chunk in resp.iter_content(chunk_size=8192):
-                    f.write(chunk)
+            x_data = chunk_data['x']  # Shape (num_examples, time_steps, bands)
+            y_data = chunk_data['y']  # Shape (num_examples,)
 
-            # Process chunk
-            with np.load(tmp_file) as data:
-                x_data = data['x']  # Shape (num_examples, time_steps, bands)
-                y_data = data['y']  # Shape (num_examples,)
+            for example_idx in range(len(y_data)):
+                example_x = x_data[example_idx]
+                example_y = y_data[example_idx]
 
-                for example_idx in range(len(y_data)):
-                    example_x = x_data[example_idx]
-                    example_y = y_data[example_idx]
+                for entry in example_x:
+                    x_tensor = torch.tensor(entry, dtype=torch.float32)
+                    bands = ["B1", "B2", "B3", "B4", "B5", "B6", "B7", "B8", "B8A", "B9", "B11", "B12"]
+                    presto_input, mask = construct_single_presto_input(s2=x_tensor, s2_bands=bands)
 
-                    for entry in example_x:
-                        x_tensor = torch.tensor(entry, dtype=torch.float32)
-                        bands = ["B1", "B2", "B3", "B4", "B5", "B6", "B7", "B8", "B8A", "B9", "B11", "B12"]
-                        presto_input, mask = construct_single_presto_input(s2=x_tensor, s2_bands=bands)
-
-                        # Apply masking if specified
-                        if self.mask_params is not None:
-                            masked = self.mask_params.mask_data(presto_input)
-                            mask, x, y, strat = masked
-                            processed = {
-                                "x": x,
-                                "y": y,
-                                "mask": mask,
-                                "strategy": strat
-                            }
-                        else:
-                            x = presto_input
-                            y = torch.tensor(example_y, dtype=torch.long)
-                            processed = {
-                                "x": x,
-                                "y": y,
-                                "mask": mask
-                            }
-                        if self.shuffle:
-                            shuffle_buffer.append(processed)
-                            # Shuffle when buffer is full
-                            if len(shuffle_buffer) >= self.shuffle_buffer_size:
-                                self.rng.shuffle(shuffle_buffer)
-                                while shuffle_buffer:
-                                    yield shuffle_buffer.pop(0)
-                        else:
-                            yield processed
-
-            # Cleanup chunk file
-            os.remove(tmp_file)
-            chunk_idx += 1
+                    # Apply masking if specified
+                    if self.mask_params is not None:
+                        masked = self.mask_params.mask_data(presto_input)
+                        mask, x, y, strat = masked
+                        processed = {
+                            "x": x,
+                            "y": y,
+                            "mask": mask,
+                            "strategy": strat
+                        }
+                    else:
+                        x = presto_input
+                        y = torch.tensor(example_y, dtype=torch.long)
+                        processed = {
+                            "x": x,
+                            "y": y,
+                            "mask": mask
+                        }
+                    if self.shuffle:
+                        shuffle_buffer.append(processed)
+                        # Shuffle when buffer is full
+                        if len(shuffle_buffer) >= self.shuffle_buffer_size:
+                            self.rng.shuffle(shuffle_buffer)
+                            while shuffle_buffer:
+                                yield shuffle_buffer.pop(0)
+                    else:
+                        yield processed
 
         # Yield remaining shuffled examples
         if self.shuffle:
             self.rng.shuffle(shuffle_buffer)
             while shuffle_buffer:
                 yield shuffle_buffer.pop(0)
+
+    def _download_chunks(self):
+        chunk_idx = self.start_chunk
+        while True:
+            chunk_url = f"{self.base_url}/chunk_{chunk_idx}.npz"
+            resp = requests.get(chunk_url)
+            if resp.status_code == 404:
+                self.chunk_queue.put(None)  # Signal end of iteration
+                break
+            resp.raise_for_status()
+            # Load directly into memory (no temp files)
+            with BytesIO(resp.content) as buffer:
+                data = np.load(buffer)
+                self.chunk_queue.put((data['x'], data['y']))
+            chunk_idx += 1
 
 class FranceCropsMiniDataset(TorchDataset):
     def __init__(
