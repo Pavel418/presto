@@ -147,7 +147,7 @@ val_dataset = FranceCropsMiniDataset(
     mask_params=mask_params,
     shuffle=False,
     seed=42,
-    cache_dir="./cache_val"
+    cache_dir="./cache_val_mini"
 )
 
 train_dataloader = torch.utils.data.DataLoader(
