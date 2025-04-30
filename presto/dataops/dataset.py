@@ -1,11 +1,13 @@
 import json
 import logging
 import os
+import queue
 import random
 import shutil
 from collections import defaultdict
 from pathlib import Path
 from sys import platform
+import threading
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 import requests
 import torch
@@ -23,7 +25,7 @@ from openmapflow.ee_boundingbox import EEBoundingBox
 from shapely import geometry
 from tqdm import tqdm
 import datasets
-from datasets import load_dataset, ClassLabel, Value, load_from_disk
+from datasets import load_dataset, ClassLabel, Value, load_from_disk, concatenate_datasets
 
 from .. import utils
 from .masking import MaskedExample, MaskParams
@@ -676,12 +678,19 @@ class FranceCropsContrastDataset(IterableDataset):
 
         # Initialize RNG for shuffling
         self.rng = np.random.default_rng(seed)
+        self.chunk_queue = queue.Queue(maxsize=3)  # Buffer 2-3 chunks ahead
+        self.download_thread = None
 
     def __iter__(self):
         chunk_idx = self.start_chunk
+        self.download_thread = threading.Thread(target=self._download_chunks)
+        self.download_thread.start()
         shuffle_buffer = []
 
         while True:
+            chunk_data = self.chunk_queue.get()
+            if chunk_data is None:  # Termination signal
+                break
             chunk_url = f"{self.base_url}/chunk_{chunk_idx}.npz"
             resp = requests.get(chunk_url, stream=True)
             
@@ -749,3 +758,152 @@ class FranceCropsContrastDataset(IterableDataset):
             while shuffle_buffer:
                 yield shuffle_buffer.pop(0)
 
+class FranceCropsMiniDataset(TorchDataset):
+    def __init__(
+        self,
+        split: str,
+        directory: Path,
+        mask_params: Optional[MaskParams] = None,
+        shuffle: bool = True,
+        seed: int = 42,
+        cache_dir: Optional[str] = None,
+        val_subset_size: int = 10,
+    ):
+        super().__init__()
+        self.mask_params = mask_params
+        self.split = split
+        self.shuffle = shuffle
+        self.seed = seed
+        self.cache_dir = cache_dir
+        self.directory = directory
+        self.val_subset_size = val_subset_size
+
+        if cache_dir and os.path.exists(cache_dir):
+            self._validate_cache(cache_dir)
+            self.base_dataset = load_from_disk(os.path.join(cache_dir, 'dataset'))
+        else:
+            self.base_dataset = self._load()
+            self.base_dataset = self._preprocess()
+            if cache_dir:
+                self._save_cache(cache_dir)
+        
+        self.base_dataset.set_format(type='torch')
+
+    def _validate_cache(self, cache_dir: str):
+        """Ensure cached parameters match current settings"""
+        metadata_path = os.path.join(cache_dir, 'metadata.json')
+        if not os.path.exists(metadata_path):
+            raise ValueError(f"Metadata not found in {cache_dir}")
+        
+        with open(metadata_path, 'r') as f:
+            saved_metadata = f.read()  # Read as raw string
+        
+        current_metadata = self._get_metadata()
+        if saved_metadata != current_metadata:
+            raise ValueError(
+                f"Cache mismatch. Delete or use different cache directory.\n"
+                f"Saved: {saved_metadata}\nCurrent: {current_metadata}"
+            )
+
+    def _get_metadata(self) -> dict:
+        """Generate parameter signature with serializable data types"""
+        metadata = {
+            'split': self.split,
+            'mask_params': getattr(self.mask_params, '__dict__', None) if getattr(self, 'mask_params', None) else None,
+            'shuffle': self.shuffle,
+            'seed': self.seed,
+            'directory': str(self.directory),
+            'val_subset_size': self.val_subset_size,
+        }
+        return json.dumps(metadata)
+
+    def _save_cache(self, cache_dir: str):
+        """Persist processed dataset with metadata"""
+        os.makedirs(cache_dir, exist_ok=True)
+        dataset_path = os.path.join(cache_dir, 'dataset')
+        self.base_dataset.save_to_disk(dataset_path)
+        
+        metadata_path = os.path.join(cache_dir, 'metadata.json')
+        with open(metadata_path, 'w') as f:
+            f.write(self._get_metadata())
+
+    def _load(self) -> Dataset:
+        """Handle stratified three-way split from original dataset"""
+        if self.split not in ['train', 'validation', 'test']:
+            raise ValueError(f"Invalid split: {self.split}")
+
+        if self.split == 'train':
+            for i in range(20):
+                x = np.load(self.directory / "train_dataset" / f"subset_{i:02d}" / "x.npy")
+                y = np.load(self.directory / "train_dataset" / f"subset_{i:02d}" / "y.npy")
+
+                if i == 0:
+                    full_dataset = Dataset.from_dict({"x": x, "y": y})
+                else:
+                    full_dataset = concatenate_datasets([full_dataset, Dataset.from_dict({"x": x, "y": y})])
+        elif self.split == "test":
+            x = np.load(self.directory / f"{self.split}_dataset" / "x.npy")
+            y = np.load(self.directory / f"{self.split}_dataset" / "y.npy")
+            full_dataset = Dataset.from_dict({"x": x, "y": y})
+        else:
+            x = np.load(self.directory / f"{self.split}_dataset" / "x.npy")
+            y = np.load(self.directory / f"{self.split}_dataset" / "y.npy")
+            full_dataset = Dataset.from_dict({"x": x, "y": y})
+            full_dataset = full_dataset.select(range(self.val_subset_size))
+
+        return full_dataset
+
+    def _expand_function(self, examples):
+        """Vectorized expansion of time series data into individual slices."""
+        # Concatenate all time steps across the batch
+        x_arrays = examples['x']
+        all_x = np.concatenate(x_arrays, axis=0)
+        
+        # Repeat labels for each time step
+        lengths = [len(x) for x in x_arrays]
+        new_y = np.repeat(examples['y'], lengths)
+        
+        return {"x": all_x, "y": new_y}
+
+    def _convert_to_presto(self, examples):
+        """Convert examples to Presto input format."""
+        x_tensor = torch.tensor(examples['x'], dtype=torch.float32)
+        bands = ["B1", "B2", "B3", "B4", "B5", "B6", "B7", "B8", "B8A", "B9", "B11", "B12"]
+        presto_input, mask = construct_single_presto_input(s2=x_tensor, s2_bands=bands, batched=True)
+
+        if self.mask_params is None:
+            return {
+                "x": presto_input, "y": examples["y"], "mask": mask
+            }
+        
+        mask, x, y, strat = self.mask_params.mask_data(presto_input)
+
+        return {
+            "x": x, "y": y, "mask": mask, "strategy": strat
+        }
+
+    def _preprocess(self) -> Dataset:
+        """Apply preprocessing steps including expansion and conversion."""
+        # Expand the dataset
+        expanded_dataset = self.base_dataset.map(
+            self._expand_function,
+            batched=True,
+            remove_columns=["x", "y"],
+            num_proc=8,
+        )
+        # Shuffle if required
+        if self.shuffle:
+            expanded_dataset = expanded_dataset.shuffle(seed=self.seed)
+        # Convert to Presto format
+        processed_dataset = expanded_dataset.map(
+            self._convert_to_presto,
+            batched=True,
+            num_proc=8,
+            )
+        return processed_dataset
+
+    def __len__(self) -> int:
+        return len(self.base_dataset)
+
+    def __getitem__(self, idx) -> dict:
+        return self.base_dataset[idx]

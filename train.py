@@ -15,7 +15,8 @@ from tqdm import tqdm
 from presto import Presto
 from presto.dataops import BANDS_GROUPS_IDX, MASK_STRATEGIES, MaskParams, plot_masked
 from presto.dataops.dataset import (
-    FranceCropsFullDataset,
+    FranceCropsContrastDataset,
+    FranceCropsMiniDataset
 )
 from presto.model import LossWrapper, adjust_learning_rate, param_groups_weight_decay
 from presto.utils import (
@@ -134,17 +135,15 @@ model_kwargs = json.load(Path(path_to_config).open("r"))
 logger.info("Setting up dataloaders")
 mask_params = MaskParams(mask_strategies, mask_ratio)
 
-train_dataset = FranceCropsFullDataset(
-    dataset="saget-antoine/francecrops",
-    split="train",
+train_dataset = FranceCropsContrastDataset(
+    "https://huggingface.co/datasets/saget-antoine/francecrops_mini/tree/main/temp_chunks",
     mask_params=mask_params,
     shuffle=True,
     seed=42,
-    cache_dir="./cache_train"
 )
-val_dataset = FranceCropsFullDataset(
-    dataset="saget-antoine/francecrops",
+val_dataset = FranceCropsMiniDataset(
     split="validation",
+    directory=Path("/home/p.kuznetsov/presto/francecrops_mini"),
     mask_params=mask_params,
     shuffle=False,
     seed=42,
@@ -193,6 +192,9 @@ lowest_validation_loss = None
 best_val_epoch = 0
 training_step = 0
 num_validations = 0
+early_stop = False
+no_improvement_count = 0
+patience = 5
 
 with tqdm(range(num_epochs), desc="Epoch") as tqdm_epoch:
     for epoch in tqdm_epoch:
@@ -290,16 +292,23 @@ with tqdm(range(num_epochs), desc="Epoch") as tqdm_epoch:
                 }
                 tqdm_epoch.set_postfix(loss=val_loss)
 
+                # Check for early stopping
                 if lowest_validation_loss is None or val_loss < lowest_validation_loss:
                     lowest_validation_loss = val_loss
                     best_val_epoch = epoch
+                    no_improvement_count = 0  # Reset counter
 
+                    # Save the best model
                     model_path = logging_dir / Path("models")
                     model_path.mkdir(exist_ok=True, parents=True)
-
                     best_model_path = model_path / f"{model_name}{epoch}.pt"
                     logger.info(f"Saving best model to: {best_model_path}")
                     torch.save(model.state_dict(), best_model_path)
+                else:
+                    no_improvement_count += 1
+                    if no_improvement_count >= patience:
+                        early_stop = True
+                        logger.info(f"No improvement for {patience} validations. Early stopping.")
 
                 # reset training logging
                 total_train_loss = 0.0
@@ -310,5 +319,17 @@ with tqdm(range(num_epochs), desc="Epoch") as tqdm_epoch:
                 num_validations += 1
 
                 model.train()
+
+                # Break training loop if early stopping
+                if early_stop:
+                    break  # Breaks out of train_bar loop
+
+            # Check for early stop within the epoch step loop
+            if early_stop:
+                break  # Breaks out of epoch_step loop
+
+        # Break epoch loop if early stopping
+        if early_stop:
+            break  # Breaks out of epoch loop
 
 logger.info(f"Done training, best model saved to {best_model_path}")
