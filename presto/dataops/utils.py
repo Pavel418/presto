@@ -57,54 +57,65 @@ def construct_single_presto_input(
     s2: Optional[torch.Tensor] = None,
     s2_bands: Optional[List[str]] = None,
     normalize: bool = True,
-    ndvi: bool = True
+    ndvi: bool = True,
+    batched: bool = False
 ):
     """
     Inputs are paired into a tensor input <X> and a list <X>_bands, which describes <X>.
 
-    <X> should have shape (num_timesteps, len(<X>_bands)), with the following bands possible for
-    each input:
+    <X> should have shape (num_timesteps, len(<X>_bands)) if not batched, or (batch_size, num_timesteps, len(<X>_bands)) if batched.
 
     s2: ["B1", "B2", "B3", "B4", "B5", "B6", "B7", "B8", "B8A", "B9", "B10", "B11", "B12"]
 
     dynamic_world is a 1d input of shape (num_timesteps,) representing the dynamic world classes
         of each timestep for that pixel
     """
-    num_timesteps_list = [x.shape[0] for x in [s2] if x is not None]
-
-    assert len(num_timesteps_list) > 0
-    assert all(num_timesteps_list[0] == timestep for timestep in num_timesteps_list)
+    num_timesteps_list = []
+    for tensor in [s2]:
+        if tensor is not None:
+            if batched:
+                num_timesteps_list.append(tensor.shape[1])
+            else:
+                num_timesteps_list.append(tensor.shape[0])
+    assert len(num_timesteps_list) > 0, "At least one input must be provided"
+    assert all(num_timesteps_list[0] == ts for ts in num_timesteps_list), "All inputs must have the same number of timesteps"
     num_timesteps = num_timesteps_list[0]
     ndvi_len = 1 if ndvi else 0
-    mask, x = torch.ones(num_timesteps, len(s2_bands) + ndvi_len), torch.zeros(num_timesteps, len(s2_bands) + ndvi_len)
+
+    device = s2.device if s2 is not None else torch.device('cpu')
+
+    if batched:
+        batch_size = s2.shape[0]
+        mask = torch.ones(batch_size, num_timesteps, len(s2_bands) + ndvi_len, device=device)
+        x = torch.zeros_like(mask)
+    else:
+        mask = torch.ones(num_timesteps, len(s2_bands) + ndvi_len, device=device)
+        x = torch.zeros_like(mask)
 
     for band_group in [
         (s2, s2_bands, S2_BANDS),
     ]:
         data, input_bands, output_bands = band_group
         if data is not None:
-            assert input_bands is not None
+            assert input_bands is not None, "Input bands must be provided if data is not None"
         else:
             continue
 
-        # construct a mapping from the input bands to the expected bands
         kept_input_band_idxs = [i for i, val in enumerate(input_bands) if val in output_bands]
         kept_input_band_names = [val for val in input_bands if val in output_bands]
 
         input_to_output_mapping = [s2_bands.index(val) for val in kept_input_band_names]
 
-        x[:, input_to_output_mapping] = data[:, kept_input_band_idxs]
-        mask[:, input_to_output_mapping] = 0
+        x[..., input_to_output_mapping] = data[..., kept_input_band_idxs]
+        mask[..., input_to_output_mapping] = 0
 
     if normalize:
         if isinstance(x, np.ndarray):
             x = ((x + ADD_BY) / DIVIDE_BY).astype(np.float32)
         else:
-            x = (x + torch.tensor(ADD_BY)) / torch.tensor(DIVIDE_BY)
-    if ndvi:        
-        if len(x.shape) == 2:
-            x[:, len(s2_bands)] = calculate_ndvi(x, s2_bands)
-        else:
-            x[:, :, len(s2_bands)] = calculate_ndvi(x, s2_bands)
-        mask[:, len(s2_bands)] = 0
+            x = (x + torch.tensor(ADD_BY, device=device)) / torch.tensor(DIVIDE_BY, device=device)
+    if ndvi:
+        x_ndvi = calculate_ndvi(x, s2_bands)
+        x[..., len(s2_bands)] = x_ndvi
+        mask[..., len(s2_bands)] = 0
     return x, mask

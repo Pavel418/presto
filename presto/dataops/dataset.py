@@ -7,10 +7,10 @@ from collections import defaultdict
 from pathlib import Path
 from sys import platform
 from typing import Any, Dict, Iterable, List, Optional, Tuple
-
+import requests
 import torch
 from torch.utils.data import Dataset as TorchDataset
-
+from torch.utils.data import IterableDataset
 import ee
 import geopandas as gpd
 import numpy as np
@@ -655,3 +655,97 @@ class FranceCropsFullDataset(TorchDataset):
 
     def __getitem__(self, idx) -> dict:
         return self.base_dataset[idx]
+    
+class FranceCropsContrastDataset(IterableDataset):
+    def __init__(
+        self,
+        base_url: str,
+        mask_params: Optional[MaskParams] = None,
+        shuffle: bool = True,
+        seed: int = 42,
+        start_chunk: int = 0,
+        shuffle_buffer_size: int = 1000,
+    ):
+        super().__init__()
+        self.base_url = base_url.rstrip("/")
+        self.mask_params = mask_params
+        self.shuffle = shuffle
+        self.seed = seed
+        self.start_chunk = start_chunk
+        self.shuffle_buffer_size = shuffle_buffer_size
+
+        # Initialize RNG for shuffling
+        self.rng = np.random.default_rng(seed)
+
+    def __iter__(self):
+        chunk_idx = self.start_chunk
+        shuffle_buffer = []
+
+        while True:
+            chunk_url = f"{self.base_url}/chunk_{chunk_idx}.npz"
+            resp = requests.get(chunk_url, stream=True)
+            
+            # Stop if chunk doesn't exist
+            if resp.status_code == 404:
+                print(f"Chunk {chunk_idx} not found. Stopping iteration.")
+                break
+            resp.raise_for_status()
+
+            # Download chunk
+            tmp_file = f"chunk_{chunk_idx}.npz"
+            with open(tmp_file, "wb") as f:
+                for chunk in resp.iter_content(chunk_size=8192):
+                    f.write(chunk)
+
+            # Process chunk
+            with np.load(tmp_file) as data:
+                x_data = data['x']  # Shape (num_examples, time_steps, bands)
+                y_data = data['y']  # Shape (num_examples,)
+
+                for example_idx in range(len(y_data)):
+                    example_x = x_data[example_idx]
+                    example_y = y_data[example_idx]
+
+                    for entry in example_x:
+                        x_tensor = torch.tensor(entry, dtype=torch.float32)
+                        bands = ["B1", "B2", "B3", "B4", "B5", "B6", "B7", "B8", "B8A", "B9", "B11", "B12"]
+                        presto_input, mask = construct_single_presto_input(s2=x_tensor, s2_bands=bands)
+
+                        # Apply masking if specified
+                        if self.mask_params is not None:
+                            masked = self.mask_params.mask_data(presto_input)
+                            mask, x, y, strat = masked
+                            processed = {
+                                "x": x,
+                                "y": y,
+                                "mask": mask,
+                                "strategy": strat
+                            }
+                        else:
+                            x = presto_input
+                            y = torch.tensor(example_y, dtype=torch.long)
+                            processed = {
+                                "x": x,
+                                "y": y,
+                                "mask": mask
+                            }
+                        if self.shuffle:
+                            shuffle_buffer.append(processed)
+                            # Shuffle when buffer is full
+                            if len(shuffle_buffer) >= self.shuffle_buffer_size:
+                                self.rng.shuffle(shuffle_buffer)
+                                while shuffle_buffer:
+                                    yield shuffle_buffer.pop(0)
+                        else:
+                            yield processed
+
+            # Cleanup chunk file
+            os.remove(tmp_file)
+            chunk_idx += 1
+
+        # Yield remaining shuffled examples
+        if self.shuffle:
+            self.rng.shuffle(shuffle_buffer)
+            while shuffle_buffer:
+                yield shuffle_buffer.pop(0)
+
