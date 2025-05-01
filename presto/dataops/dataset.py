@@ -9,6 +9,7 @@ from collections import defaultdict
 from pathlib import Path
 from sys import platform
 import threading
+import time
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 import requests
 import torch
@@ -741,16 +742,22 @@ class FranceCropsContrastDataset(IterableDataset):
     def _download_chunks(self):
         chunk_idx = self.start_chunk
         while True:
+            while self.chunk_queue.qsize() > 3:
+                time.sleep(0.2)
+
             chunk_url = f"{self.base_url}/chunk_{chunk_idx}.npz"
             resp = requests.get(chunk_url)
             if resp.status_code == 404:
-                self.chunk_queue.put(None)  # Signal end of iteration
+                self.chunk_queue.put(None)  # signal end
                 break
             resp.raise_for_status()
+
             # Load directly into memory (no temp files)
             with BytesIO(resp.content) as buffer:
                 data = np.load(buffer)
                 self.chunk_queue.put((data['x'], data['y']))
+
+            logger.info(f"Downloaded chunk {chunk_idx}")
             chunk_idx += 1
 
 class FranceCropsMiniDataset(TorchDataset):
