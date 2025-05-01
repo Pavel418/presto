@@ -692,6 +692,7 @@ class FranceCropsContrastDataset(IterableDataset):
         while True:
             chunk_data = self.chunk_queue.get()
             if chunk_data is None:  # Termination signal
+                print("No more chunks to download.")
                 break
 
             x_data, y_data = chunk_data
@@ -752,6 +753,7 @@ class FranceCropsContrastDataset(IterableDataset):
             resp = requests.get(chunk_url)
             if resp.status_code == 404:
                 self.chunk_queue.put(None)  # signal end
+                print(f"Chunk {chunk_idx} not found. Stopping download.")
                 break
             resp.raise_for_status()
 

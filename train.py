@@ -206,6 +206,7 @@ with tqdm(range(num_epochs), desc="Epoch") as tqdm_epoch:
         model.train()
         train_bar = tqdm(train_dataloader, desc=" Train", leave=False, total=1000 * 1000)
         for epoch_step, b in enumerate(train_bar, start=1):
+            print(f"Epoch step: {epoch_step}")
             mask, x, y = b["mask"].to(device), b["x"].to(device), b["y"].to(device)
             # zero the parameter gradients
             optimizer.zero_grad()
