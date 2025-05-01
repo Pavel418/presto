@@ -136,7 +136,7 @@ logger.info("Setting up dataloaders")
 mask_params = MaskParams(mask_strategies, mask_ratio)
 
 train_dataset = FranceCropsContrastDataset(
-    "https://huggingface.co/datasets/saget-antoine/francecrops_mini/tree/main/temp_chunks",
+    "https://huggingface.co/datasets/saget-antoine/francecrops_mini/resolve/main/temp_chunks/",
     mask_params=mask_params,
     seed=42,
 )

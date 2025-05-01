@@ -748,7 +748,6 @@ class FranceCropsContrastDataset(IterableDataset):
         while True:
             while self.chunk_queue.qsize() > 3:
                 time.sleep(0.2)
-
             chunk_url = f"{self.base_url}/chunk_{chunk_idx}.npz"
             print(f"Downloading chunk {chunk_idx} from {chunk_url}")
             resp = requests.get(chunk_url)
