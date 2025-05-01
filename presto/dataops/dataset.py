@@ -844,7 +844,16 @@ class FranceCropsMiniDataset(TorchDataset):
             x = np.load(self.directory / f"{self.split}_dataset" / "x.npy")
             y = np.load(self.directory / f"{self.split}_dataset" / "y.npy")
             full_dataset = datasets.Dataset.from_dict({"x": x, "y": y})
-            full_dataset = full_dataset.select(range(self.val_subset_size))
+
+            selected_indices = []
+            for label in np.unique(y):
+                label_indices = np.where(y == label)[0]
+                n_samples = min(len(label_indices), self.val_subset_size)
+                selected_indices.extend(label_indices[:n_samples])
+
+            np.random.shuffle(selected_indices)
+
+            full_dataset = full_dataset.select(selected_indices)
 
         return full_dataset
 
@@ -871,10 +880,25 @@ class FranceCropsMiniDataset(TorchDataset):
                 "x": presto_input, "y": examples["y"], "mask": mask
             }
         
-        mask, x, y, strat = self.mask_params.mask_data(presto_input)
+        # Batched processing: loop over each example to apply masking
+        batch_size = presto_input.size(0)
+        masks, xs, ys, strats = [], [], [], []
+        
+        for i in range(batch_size):
+            presto_single = presto_input[i]
+            mask_i, x_i, y_i, strat_i = self.mask_params.mask_data(presto_single)
+            masks.append(mask_i)
+            xs.append(x_i)
+            ys.append(y_i)
+            strats.append(strat_i)
+        
+        # Stack tensors to maintain batched format
+        mask = torch.stack(masks)
+        x = torch.stack(xs)
+        y = torch.stack(ys)
 
         return {
-            "x": x, "y": y, "mask": mask, "strategy": strat
+            "x": x, "y": y, "mask": mask, "strategy": strats
         }
 
     def _preprocess(self) -> datasets.Dataset:
