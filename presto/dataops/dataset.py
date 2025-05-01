@@ -684,6 +684,7 @@ class FranceCropsContrastDataset(IterableDataset):
         self.download_thread = None
 
     def __iter__(self):
+        print("iterating")
         self.download_thread = threading.Thread(target=self._download_chunks)
         self.download_thread.start()
         shuffle_buffer = []
