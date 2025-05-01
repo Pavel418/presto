@@ -193,7 +193,7 @@ training_step = 0
 num_validations = 0
 early_stop = False
 no_improvement_count = 0
-patience = 5
+patience = 50
 
 with tqdm(range(num_epochs), desc="Epoch") as tqdm_epoch:
     for epoch in tqdm_epoch:

@@ -773,6 +773,7 @@ class FranceCropsMiniDataset(TorchDataset):
         seed: int = 42,
         cache_dir: Optional[str] = None,
         val_subset_size: int = 10,
+        num_proc: int = 1,
     ):
         super().__init__()
         self.mask_params = mask_params
@@ -782,6 +783,7 @@ class FranceCropsMiniDataset(TorchDataset):
         self.cache_dir = cache_dir
         self.directory = directory
         self.val_subset_size = val_subset_size
+        self.num_proc = num_proc
 
         if cache_dir and os.path.exists(cache_dir):
             self._validate_cache(cache_dir)
@@ -918,7 +920,7 @@ class FranceCropsMiniDataset(TorchDataset):
             self._expand_function,
             batched=True,
             remove_columns=["x", "y"],
-            num_proc=8,
+            num_proc=self.num_proc,
         )
         # Shuffle if required
         if self.shuffle:
@@ -927,7 +929,7 @@ class FranceCropsMiniDataset(TorchDataset):
         processed_dataset = expanded_dataset.map(
             self._convert_to_presto,
             batched=True,
-            num_proc=8,
+            num_proc=self.num_proc,
             )
         return processed_dataset
 
