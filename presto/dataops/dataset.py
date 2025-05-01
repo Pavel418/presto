@@ -893,7 +893,7 @@ class FranceCropsMiniDataset(TorchDataset):
             strats.append(strat_i)
         
         # Stack tensors to maintain batched format
-        mask = torch.stack(masks)
+        mask = np.stack(masks)
         x = torch.stack(xs)
         y = torch.stack(ys)
 
