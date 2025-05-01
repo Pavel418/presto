@@ -150,7 +150,7 @@ val_dataset = FranceCropsMiniDataset(
 )
 
 train_dataloader = torch.utils.data.DataLoader(
-    train_dataset, batch_size=32, num_workers=4, pin_memory=True
+    train_dataset, batch_size=32, pin_memory=True
 )
 
 val_dataloader = torch.utils.data.DataLoader(
