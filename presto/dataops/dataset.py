@@ -895,7 +895,7 @@ class FranceCropsMiniDataset(TorchDataset):
         # Stack tensors to maintain batched format
         mask = np.stack(masks)
         x = torch.stack(xs)
-        y = torch.stack(ys)
+        y = np.stack(ys)
 
         return {
             "x": x, "y": y, "mask": mask, "strategy": strats
