@@ -684,7 +684,6 @@ class FranceCropsContrastDataset(IterableDataset):
         self.download_thread = None
 
     def __iter__(self):
-        print("iterating")
         self.download_thread = threading.Thread(target=self._download_chunks)
         self.download_thread.start()
         shuffle_buffer = []
@@ -749,7 +748,6 @@ class FranceCropsContrastDataset(IterableDataset):
             while self.chunk_queue.qsize() > 3:
                 time.sleep(0.2)
             chunk_url = f"{self.base_url}/chunk_{chunk_idx}.npz"
-            print(f"Downloading chunk {chunk_idx} from {chunk_url}")
             resp = requests.get(chunk_url)
             if resp.status_code == 404:
                 self.chunk_queue.put(None)  # signal end
