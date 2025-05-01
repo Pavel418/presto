@@ -693,8 +693,7 @@ class FranceCropsContrastDataset(IterableDataset):
             if chunk_data is None:  # Termination signal
                 break
 
-            x_data = chunk_data['x']  # Shape (num_examples, time_steps, bands)
-            y_data = chunk_data['y']  # Shape (num_examples,)
+            x_data, y_data = chunk_data
 
             for example_idx in range(len(y_data)):
                 example_x = x_data[example_idx]
@@ -738,6 +737,9 @@ class FranceCropsContrastDataset(IterableDataset):
             self.rng.shuffle(shuffle_buffer)
             while shuffle_buffer:
                 yield shuffle_buffer.pop(0)
+
+        if self.download_thread is not None:
+            self.download_thread.join()
 
     def _download_chunks(self):
         chunk_idx = self.start_chunk
