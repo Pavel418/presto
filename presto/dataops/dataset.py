@@ -10,7 +10,7 @@ from pathlib import Path
 from sys import platform
 import threading
 import time
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple, Union
 import requests
 import torch
 from torch.utils.data import Dataset as TorchDataset
@@ -915,20 +915,11 @@ class FranceCropsMiniDataset(TorchDataset):
 
     def _preprocess(self) -> datasets.Dataset:
         """Apply preprocessing steps including expansion and conversion."""
-        if self.split == "test":
-            expand_batch_size = 10  # Smaller batches for expansion
-            convert_batch_size = 10  # Smaller batches for Presto conversion
-        else:
-            expand_batch_size = 1000
-            convert_batch_size = 1000
-
-        # Expand the dataset
         expanded_dataset = self.base_dataset.map(
             self._expand_function,
             batched=True,
             remove_columns=["x", "y"],
             num_proc=self.num_proc,
-            batch_size=expand_batch_size,
         )
         # Shuffle if required
         if self.shuffle:
@@ -938,7 +929,6 @@ class FranceCropsMiniDataset(TorchDataset):
             self._convert_to_presto,
             batched=True,
             num_proc=self.num_proc,
-            batch_size=convert_batch_size,
             )
         return processed_dataset
 
@@ -947,3 +937,79 @@ class FranceCropsMiniDataset(TorchDataset):
 
     def __getitem__(self, idx) -> dict:
         return self.base_dataset[idx]
+
+class FranceCropsTestDataset(TorchDataset):
+    """
+    A Dataset for the France Crops test split.
+
+    This class loads the entire test set once and flattens all time-series
+    samples into individual time-step slices. On-the-fly transforms
+    (including Presto conversion and optional masking) are applied in __getitem__,
+    so no caching or preprocessing is needed.
+    """
+
+    # Sentinel list of Sentinel-2 bands, used for Presto conversion
+    BANDS = [
+        "B1", "B2", "B3", "B4", "B5", "B6", "B7",
+        "B8", "B8A", "B9", "B11", "B12"
+    ]
+
+    def __init__(
+        self,
+        directory: Union[str, Path],
+        mask_params: Optional[object] = None,
+        transform: Optional[Callable] = None,
+    ):
+        """
+        Args:
+            directory: Path to the root directory containing 'test_dataset/x.npy' and 'test_dataset/y.npy'.
+            mask_params: Optional masking utility with method `mask_data(tensor) -> (mask, x, y, strategy)`.
+            transform: Optional callable applied to each sample dict after Presto conversion and masking.
+        """
+        super().__init__()
+        self.directory = Path(directory)
+        self.mask_params = mask_params
+        self.transform = transform
+
+        # Load raw test data
+        x_arrays = np.load(self.directory / 'test_dataset' / 'x.npy', mmap_mode='r')
+        y_array = np.load(self.directory / 'test_dataset' / 'y.npy')
+
+        # Flatten sequences to individual time-step slices
+        lengths = [len(seq) for seq in x_arrays]
+        self.x_flat = np.concatenate(x_arrays, axis=0)
+        self.y_flat = np.repeat(y_array, lengths)
+
+    def __len__(self) -> int:
+        return len(self.y_flat)
+
+    def __getitem__(self, idx: int) -> dict:
+        # Extract raw slice and label
+        raw_slice = self.x_flat[idx]
+        label = int(self.y_flat[idx])
+
+        # Convert raw slice to torch tensor
+        x_tensor = torch.tensor(raw_slice, dtype=torch.float32)
+
+        # Presto input expects a batch dimension
+        presto_in, mask = construct_single_presto_input(
+            s2=x_tensor.unsqueeze(0),
+            s2_bands=self.BANDS,
+            batched=True
+        )
+        # Remove batch dimension
+        presto_in = presto_in.squeeze(0)
+        mask = mask.squeeze(0)
+
+        # Apply optional masking strategy
+        if self.mask_params is not None:
+            mask_i, x_i, y_i, strat_i = self.mask_params.mask_data(presto_in)
+            sample = {"x": x_i, "y": y_i, "mask": mask_i, "strategy": strat_i}
+        else:
+            sample = {"x": presto_in, "y": label, "mask": mask}
+
+        # Apply any additional on-the-fly transforms (e.g., normalization)
+        if self.transform:
+            sample = self.transform(sample)
+
+        return sample
