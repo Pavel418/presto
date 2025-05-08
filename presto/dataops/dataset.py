@@ -929,6 +929,7 @@ class FranceCropsMiniDataset(TorchDataset):
             remove_columns=["x", "y"],
             num_proc=self.num_proc,
             batch_size=expand_batch_size,
+            writer_batch_size=1000,
         )
         # Shuffle if required
         if self.shuffle:
@@ -939,6 +940,7 @@ class FranceCropsMiniDataset(TorchDataset):
             batched=True,
             num_proc=self.num_proc,
             batch_size=convert_batch_size,
+            writer_batch_size=1000,
             )
         return processed_dataset
 
