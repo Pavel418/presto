@@ -778,7 +778,7 @@ class FranceCropsMiniDataset(TorchDataset):
         super().__init__()
         self.mask_params = mask_params
         self.split = split
-        self.shuffle = shuffle
+        self.shuffle = shuffle if split != "test" else False
         self.seed = seed
         self.cache_dir = cache_dir
         self.directory = directory
@@ -849,7 +849,7 @@ class FranceCropsMiniDataset(TorchDataset):
                 else:
                     full_dataset = concatenate_datasets([full_dataset, Dataset.from_dict({"x": x, "y": y})])
         elif self.split == "test":
-            x = np.load(self.directory / f"{self.split}_dataset" / "x.npy")
+            x = np.load(self.directory / f"{self.split}_dataset" / "x.npy", mmap_mode="r")
             y = np.load(self.directory / f"{self.split}_dataset" / "y.npy")
             full_dataset = datasets.Dataset.from_dict({"x": x, "y": y})
         else:
@@ -915,12 +915,20 @@ class FranceCropsMiniDataset(TorchDataset):
 
     def _preprocess(self) -> datasets.Dataset:
         """Apply preprocessing steps including expansion and conversion."""
+        if self.split == "test":
+            expand_batch_size = 10  # Smaller batches for expansion
+            convert_batch_size = 10  # Smaller batches for Presto conversion
+        else:
+            expand_batch_size = 1000
+            convert_batch_size = 1000
+
         # Expand the dataset
         expanded_dataset = self.base_dataset.map(
             self._expand_function,
             batched=True,
             remove_columns=["x", "y"],
             num_proc=self.num_proc,
+            batch_size=expand_batch_size,
         )
         # Shuffle if required
         if self.shuffle:
@@ -930,6 +938,7 @@ class FranceCropsMiniDataset(TorchDataset):
             self._convert_to_presto,
             batched=True,
             num_proc=self.num_proc,
+            batch_size=convert_batch_size,
             )
         return processed_dataset
 

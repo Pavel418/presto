@@ -59,7 +59,7 @@ argparser.add_argument(
     "Leave empty to use the directory you are running this file from.",
 )
 argparser.add_argument("--n_epochs", type=int, default=20)
-argparser.add_argument("--val_per_n_steps", type=int, default=1000)
+argparser.add_argument("--val_per_n_steps", type=int, default=10000)
 argparser.add_argument("--max_learning_rate", type=float, default=0.001)
 argparser.add_argument("--min_learning_rate", type=float, default=0.0)
 argparser.add_argument("--warmup_epochs", type=int, default=2)
@@ -193,7 +193,7 @@ training_step = 0
 num_validations = 0
 early_stop = False
 no_improvement_count = 0
-patience = 50
+patience = 3
 
 with tqdm(range(num_epochs), desc="Epoch") as tqdm_epoch:
     for epoch in tqdm_epoch:
@@ -269,7 +269,6 @@ with tqdm(range(num_epochs), desc="Epoch") as tqdm_epoch:
                         num_val_updates_captured += 1
 
                 # ------------------------ Metrics + Logging -------------------------------
-                # train_loss now reflects the value against which we calculate gradients
                 train_loss = total_train_loss / num_updates_being_captured
                 train_eo_loss = total_eo_train_loss / max(total_num_eo_values_masked, 1)
 
@@ -291,25 +290,18 @@ with tqdm(range(num_epochs), desc="Epoch") as tqdm_epoch:
                 }
                 tqdm_epoch.set_postfix(loss=val_loss)
 
-                # Check for early stopping
+                # Check for best model and save
                 if lowest_validation_loss is None or val_loss < lowest_validation_loss:
                     lowest_validation_loss = val_loss
-                    best_val_epoch = epoch
-                    no_improvement_count = 0  # Reset counter
-
+                    best_val_epoch = epoch  # Update best epoch to current epoch
                     # Save the best model
                     model_path = logging_dir / Path("models")
                     model_path.mkdir(exist_ok=True, parents=True)
                     best_model_path = model_path / f"{model_name}{epoch}.pt"
                     logger.info(f"Saving best model to: {best_model_path}")
                     torch.save(model.state_dict(), best_model_path)
-                else:
-                    no_improvement_count += 1
-                    if no_improvement_count >= patience:
-                        early_stop = True
-                        logger.info(f"No improvement for {patience} validations. Early stopping.")
 
-                # reset training logging
+                # Reset training logging
                 total_train_loss = 0.0
                 total_eo_train_loss = 0.0
                 total_num_eo_values_masked = 0
@@ -319,16 +311,15 @@ with tqdm(range(num_epochs), desc="Epoch") as tqdm_epoch:
 
                 model.train()
 
-                # Break training loop if early stopping
-                if early_stop:
-                    break  # Breaks out of train_bar loop
+        # Check for early stopping after each epoch
+        if best_val_epoch == epoch:
+            no_improvement_count = 0  # Improvement occurred this epoch
+        else:
+            no_improvement_count += 1  # No improvement
 
-            # Check for early stop within the epoch step loop
-            if early_stop:
-                break  # Breaks out of epoch_step loop
-
-        # Break epoch loop if early stopping
-        if early_stop:
-            break  # Breaks out of epoch loop
+        if no_improvement_count >= patience:
+            early_stop = True
+            logger.info(f"No improvement for {patience} epochs. Early stopping.")
+            break  # Exit the epoch loop
 
 logger.info(f"Done training, best model saved to {best_model_path}")
