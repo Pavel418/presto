@@ -6,7 +6,7 @@ import sys
 import warnings
 from pathlib import Path
 from typing import List, Tuple, cast
-
+import csv
 import matplotlib.pyplot as plt
 import torch
 import torch.nn as nn
@@ -16,7 +16,8 @@ from presto import Presto
 from presto.dataops import BANDS_GROUPS_IDX, MASK_STRATEGIES, MaskParams, plot_masked
 from presto.dataops.dataset import (
     FranceCropsContrastDataset,
-    FranceCropsMiniDataset
+    FranceCropsMiniDataset,
+    FranceCropsFullDataset
 )
 from presto.model import LossWrapper, adjust_learning_rate, param_groups_weight_decay
 from presto.utils import (
@@ -58,8 +59,8 @@ argparser.add_argument(
     help="Data is stored in <data_dir>/data. "
     "Leave empty to use the directory you are running this file from.",
 )
-argparser.add_argument("--n_epochs", type=int, default=20)
-argparser.add_argument("--val_per_n_steps", type=int, default=10000)
+argparser.add_argument("--n_epochs", type=int, default=40)
+argparser.add_argument("--val_per_n_steps", type=int, default=2000)
 argparser.add_argument("--max_learning_rate", type=float, default=0.001)
 argparser.add_argument("--min_learning_rate", type=float, default=0.0)
 argparser.add_argument("--warmup_epochs", type=int, default=2)
@@ -100,6 +101,16 @@ logging_dir.mkdir(exist_ok=True, parents=True)
 initialize_logging(logging_dir)
 logger.info("Using output dir: %s" % logging_dir)
 
+metrics_path = logging_dir / "metrics.csv"
+with open(metrics_path, "w", newline="") as f:
+    writer = csv.writer(f)
+    writer.writerow([
+        "step", "epoch",
+        "train_loss", "val_loss",
+        "train_eo_loss", "val_eo_loss",
+        "lr"
+    ])
+
 data_dir = args["data_dir"]
 if data_dir != "":
     update_data_dir(data_dir)
@@ -135,18 +146,26 @@ model_kwargs = json.load(Path(path_to_config).open("r"))
 logger.info("Setting up dataloaders")
 mask_params = MaskParams(mask_strategies, mask_ratio)
 
-train_dataset = FranceCropsContrastDataset(
-    "https://huggingface.co/datasets/saget-antoine/francecrops_mini/resolve/main/temp_chunks/",
+train_dataset = FranceCropsFullDataset(
+    dataset="saget-antoine/francecrops",
+    split="train",
     mask_params=mask_params,
-    seed=42,
+    shuffle=True,
+    seed=seed,
+    cache_dir="./cache_train_full",
+    val_ratio=0.05,
+    test_ratio=0.05,
 )
-val_dataset = FranceCropsMiniDataset(
+
+val_dataset = FranceCropsFullDataset(
+    dataset="saget-antoine/francecrops",
     split="validation",
-    directory=Path("/home/p.kuznetsov/presto/francecrops_mini"),
     mask_params=mask_params,
-    shuffle=False,
-    seed=42,
-    cache_dir="./cache_val_mini"
+    shuffle=True,
+    seed=seed,
+    cache_dir="./cache_val_full",
+    val_ratio=0.05,
+    test_ratio=0.05,
 )
 
 train_dataloader = torch.utils.data.DataLoader(
@@ -193,7 +212,7 @@ training_step = 0
 num_validations = 0
 early_stop = False
 no_improvement_count = 0
-patience = 3
+patience = 5
 
 with tqdm(range(num_epochs), desc="Epoch") as tqdm_epoch:
     for epoch in tqdm_epoch:
@@ -288,6 +307,16 @@ with tqdm(range(num_epochs), desc="Epoch") as tqdm_epoch:
                     "epoch": epoch,
                     "lr": lr,
                 }
+
+                with open(metrics_path, "a", newline="") as f:
+                    writer = csv.writer(f)
+                    writer.writerow([
+                        training_step, epoch,
+                        train_loss, val_loss,
+                        train_eo_loss, val_eo_loss,
+                        lr
+                    ])
+
                 tqdm_epoch.set_postfix(loss=val_loss)
 
                 # Check for best model and save
